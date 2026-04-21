@@ -4,7 +4,10 @@ use cm_core::paths;
 use cm_core::schema::StatuslineInput;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::time::Duration;
+
+mod install;
 
 #[derive(Parser)]
 #[command(name = "cm", about = "claude-monitor CLI")]
@@ -19,6 +22,14 @@ enum Cmd {
     Statusline,
     /// Print the resolved app port (or "none" if not running).
     Port,
+    /// Install the LaunchAgent (auto-start on login) and wire the statusline hook into ~/.claude/settings.json. macOS only.
+    Install {
+        /// Path to the cm-app daemon binary. Defaults to a sibling `cm-app` next to the current executable.
+        #[arg(long)]
+        binary: Option<PathBuf>,
+    },
+    /// Reverse `cm install`: unload + remove the LaunchAgent plist and drop our statusLine entry. macOS only.
+    Uninstall,
 }
 
 fn main() -> Result<()> {
@@ -31,6 +42,8 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
+        Cmd::Install { binary } => install::install(binary),
+        Cmd::Uninstall => install::uninstall(),
     }
 }
 

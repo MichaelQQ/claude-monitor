@@ -68,6 +68,16 @@ Wire the CLI into Claude Code (`~/.claude/settings.json`):
 }
 ```
 
+Or, on macOS, let `cm` do it for you:
+
+```
+./target/release/cm install        # LaunchAgent + settings.json, points at the sibling cm-app
+./target/release/cm install --binary /path/to/cm-app   # or pick a specific daemon binary
+./target/release/cm uninstall      # unloads the LaunchAgent, drops our statusLine entry
+```
+
+`cm install` writes `~/Library/LaunchAgents/com.claude-monitor.daemon.plist` (logs in `~/.claude/claude-monitor/cm-app.{log,err}`) and `launchctl load -w`s it. The statusline command gets merged into `~/.claude/settings.json` without clobbering other keys.
+
 Env override: set `CM_PORT` to force a specific port (the app binds 0 by default and writes the bound port to `~/.claude/claude-monitor/port`).
 
 ## Testing
