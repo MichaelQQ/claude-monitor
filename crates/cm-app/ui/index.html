@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>claude-monitor</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="https://unpkg.com/uplot@1.6.30/dist/uPlot.min.css">
+  <script src="https://unpkg.com/uplot@1.6.30/dist/uPlot.iife.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>claude-monitor</h1>
+    <span id="conn" class="pill pill-off">disconnected</span>
+  </header>
+  <nav>
+    <button data-view="live" class="active">Live</button>
+    <button data-view="sessions">Sessions</button>
+    <button data-view="trends">Trends</button>
+  </nav>
+  <main>
+    <section id="view-live" class="view">
+      <div class="cards">
+        <div class="card">
+          <div class="card-label">Active session</div>
+          <div id="live-session" class="card-value">—</div>
+          <div id="live-project" class="card-sub">—</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Context window</div>
+          <div id="live-ctx" class="card-value">—</div>
+          <div class="bar"><div id="live-ctx-bar" class="bar-fill"></div></div>
+        </div>
+        <div class="card">
+          <div class="card-label">Session cost</div>
+          <div id="live-cost" class="card-value">—</div>
+          <div id="live-cost-sub" class="card-sub">—</div>
+        </div>
+        <div class="card">
+          <div class="card-label">5-hour limit</div>
+          <div id="live-5h" class="card-value">—</div>
+          <div id="live-5h-sub" class="card-sub">—</div>
+        </div>
+        <div class="card">
+          <div class="card-label">7-day limit</div>
+          <div id="live-7d" class="card-value">—</div>
+          <div id="live-7d-sub" class="card-sub">—</div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Per-turn tokens</h2>
+        <div id="live-chart" class="chart"></div>
+        <div class="legend">
+          <span><i style="background:#6aa9ff"></i> cache read</span>
+          <span><i style="background:#ffc36a"></i> cache create</span>
+          <span><i style="background:#8be28b"></i> input</span>
+          <span><i style="background:#ff7b7b"></i> output</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-sessions" class="view hidden">
+      <table id="sessions-table">
+        <thead>
+          <tr>
+            <th>Session</th><th>Project</th><th>Model</th><th>Turns</th>
+            <th>Input</th><th>Output</th><th>Cache R</th><th>Cache C</th>
+            <th>Cost</th><th>Last seen</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section id="view-trends" class="view hidden">
+      <div class="panel">
+        <h2>Daily cost (USD)</h2>
+        <div id="trend-cost" class="chart"></div>
+      </div>
+      <div class="panel">
+        <h2>Daily tokens</h2>
+        <div id="trend-tokens" class="chart"></div>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
