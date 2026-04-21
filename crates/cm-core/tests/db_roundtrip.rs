@@ -72,6 +72,23 @@ fn turn_insert_is_idempotent_on_uuid() {
 }
 
 #[test]
+fn turn_insert_writes_estimated_cost() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let pool = db::open(tmp.path()).unwrap();
+    db::insert_turn(&pool, &sample_turn("u1")).unwrap();
+    let conn = pool.get().unwrap();
+    let cost: Option<f64> = conn
+        .query_row(
+            "SELECT estimated_cost_usd FROM turns WHERE turn_uuid='u1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let c = cost.expect("opus turn should have an estimate");
+    assert!(c > 0.0, "got {c}");
+}
+
+#[test]
 fn session_upsert_merges_fields_without_wiping() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     let pool = db::open(tmp.path()).unwrap();

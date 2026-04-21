@@ -94,7 +94,7 @@ are validated against actual Claude Code output.
 
 - `GET  /v1/health` — liveness
 - `GET  /v1/sessions` — session rollups with total tokens and latest cost
-- `GET  /v1/sessions/:id/turns` — per-turn rows (ordered by ts)
+- `GET  /v1/sessions/:id/turns` — per-turn rows (ordered by ts), includes `estimated_cost_usd` priced from the published Anthropic list rates
 - `GET  /v1/sessions/:id/snapshots` — statusline snapshots for this session
 - `POST /v1/event` — statusline snapshot ingest (used by `cm statusline`)
 - `GET  /v1/live` (WebSocket) — broadcasts `{kind:"snapshot"|"turn", …}` events

@@ -70,6 +70,7 @@ struct SessionRow {
     total_cache_read: i64,
     total_cache_creation: i64,
     last_cost_usd: Option<f64>,
+    estimated_cost_usd: Option<f64>,
 }
 
 async fn list_sessions(State(state): State<AppState>) -> Result<Json<Vec<SessionRow>>, (StatusCode, String)> {
@@ -81,14 +82,16 @@ async fn list_sessions(State(state): State<AppState>) -> Result<Json<Vec<Session
                       COALESCE(t.cr,0), COALESCE(t.cc,0),
                       (SELECT total_cost_usd FROM snapshots
                          WHERE session_id=s.session_id
-                         ORDER BY ts DESC LIMIT 1)
+                         ORDER BY ts DESC LIMIT 1),
+                      t.est
                  FROM sessions s
                  LEFT JOIN (
                    SELECT session_id,
                           COUNT(*) n,
                           SUM(input_tokens) i, SUM(output_tokens) o,
                           SUM(cache_read_input_tokens) cr,
-                          SUM(cache_creation_input_tokens) cc
+                          SUM(cache_creation_input_tokens) cc,
+                          SUM(estimated_cost_usd) est
                    FROM turns GROUP BY session_id
                  ) t ON t.session_id = s.session_id
                  ORDER BY s.last_seen_at DESC"#,
@@ -108,6 +111,7 @@ async fn list_sessions(State(state): State<AppState>) -> Result<Json<Vec<Session
                 total_cache_read: r.get(8)?,
                 total_cache_creation: r.get(9)?,
                 last_cost_usd: r.get(10)?,
+                estimated_cost_usd: r.get(11)?,
             })
         })
         .map_err(|e| internal(anyhow::anyhow!(e)))?
@@ -127,6 +131,7 @@ struct TurnRow {
     cache_read_input_tokens: i64,
     ephemeral_1h_tokens: i64,
     ephemeral_5m_tokens: i64,
+    estimated_cost_usd: Option<f64>,
 }
 
 async fn list_turns(
@@ -139,7 +144,8 @@ async fn list_turns(
             r#"SELECT turn_uuid, ts, model_id,
                       input_tokens, output_tokens,
                       cache_creation_input_tokens, cache_read_input_tokens,
-                      ephemeral_1h_tokens, ephemeral_5m_tokens
+                      ephemeral_1h_tokens, ephemeral_5m_tokens,
+                      estimated_cost_usd
                  FROM turns WHERE session_id = ?1 ORDER BY ts ASC"#,
         )
         .map_err(|e| internal(anyhow::anyhow!(e)))?;
@@ -155,6 +161,7 @@ async fn list_turns(
                 cache_read_input_tokens: r.get(6)?,
                 ephemeral_1h_tokens: r.get(7)?,
                 ephemeral_5m_tokens: r.get(8)?,
+                estimated_cost_usd: r.get(9)?,
             })
         })
         .map_err(|e| internal(anyhow::anyhow!(e)))?

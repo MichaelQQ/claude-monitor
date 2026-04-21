@@ -10,6 +10,7 @@ const state = {
 const $ = (s) => document.querySelector(s);
 const fmtInt = (n) => (n ?? 0).toLocaleString();
 const fmtMoney = (n) => '$' + (n ?? 0).toFixed(2);
+const fmtMoneyPrecise = (n) => n == null ? '—' : '$' + n.toFixed(4);
 const fmtPct = (n) => n == null ? '—' : Math.round(n) + '%';
 const fmtResets = (epoch) => {
   if (!epoch) return '—';
@@ -144,6 +145,7 @@ async function loadSessions() {
       <td class="num">${fmtInt(s.total_cache_read)}</td>
       <td class="num">${fmtInt(s.total_cache_creation)}</td>
       <td class="num">${s.last_cost_usd != null ? fmtMoney(s.last_cost_usd) : '—'}</td>
+      <td class="num">${fmtMoneyPrecise(s.estimated_cost_usd)}</td>
       <td>${new Date(s.last_seen_at).toLocaleString()}</td>`;
     tbody.appendChild(tr);
   }

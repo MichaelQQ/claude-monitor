@@ -1,7 +1,8 @@
+use crate::pricing;
 use crate::schema::{StatuslineInput, TurnUsage};
 use anyhow::Result;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 
 pub type Pool = r2d2::Pool<SqliteConnectionManager>;
@@ -14,7 +15,67 @@ pub fn open(path: &Path) -> Result<Pool> {
     let pool = r2d2::Pool::builder().max_size(8).build(manager)?;
     let conn = pool.get()?;
     conn.execute_batch(SCHEMA)?;
+    migrate(&conn)?;
     Ok(pool)
+}
+
+fn migrate(conn: &Connection) -> Result<()> {
+    if !has_column(conn, "turns", "estimated_cost_usd")? {
+        conn.execute("ALTER TABLE turns ADD COLUMN estimated_cost_usd REAL", [])?;
+    }
+    backfill_turn_costs(conn)?;
+    Ok(())
+}
+
+fn backfill_turn_costs(conn: &Connection) -> Result<()> {
+    let mut select = conn.prepare(
+        r#"SELECT id, session_id, turn_uuid, ts, model_id,
+                  input_tokens, output_tokens,
+                  cache_creation_input_tokens, cache_read_input_tokens,
+                  ephemeral_1h_tokens, ephemeral_5m_tokens, service_tier
+             FROM turns WHERE estimated_cost_usd IS NULL"#,
+    )?;
+    let rows: Vec<(i64, TurnUsage)> = select
+        .query_map([], |r| {
+            let id: i64 = r.get(0)?;
+            Ok((
+                id,
+                TurnUsage {
+                    session_id: r.get(1)?,
+                    turn_uuid: r.get(2)?,
+                    ts_ms: r.get(3)?,
+                    model_id: r.get(4)?,
+                    input_tokens: r.get(5)?,
+                    output_tokens: r.get(6)?,
+                    cache_creation_input_tokens: r.get(7)?,
+                    cache_read_input_tokens: r.get(8)?,
+                    ephemeral_1h_tokens: r.get(9)?,
+                    ephemeral_5m_tokens: r.get(10)?,
+                    service_tier: r.get(11)?,
+                },
+            ))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    drop(select);
+    let mut update = conn.prepare("UPDATE turns SET estimated_cost_usd = ?1 WHERE id = ?2")?;
+    for (id, t) in rows {
+        if let Some(cost) = pricing::estimate_cost_usd(&t) {
+            update.execute(params![cost, id])?;
+        }
+    }
+    Ok(())
+}
+
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 const SCHEMA: &str = r#"
@@ -43,7 +104,8 @@ CREATE TABLE IF NOT EXISTS turns (
     cache_read_input_tokens     INTEGER NOT NULL DEFAULT 0,
     ephemeral_1h_tokens         INTEGER NOT NULL DEFAULT 0,
     ephemeral_5m_tokens         INTEGER NOT NULL DEFAULT 0,
-    service_tier                TEXT
+    service_tier                TEXT,
+    estimated_cost_usd          REAL
 );
 CREATE INDEX IF NOT EXISTS idx_turns_session_ts ON turns(session_id, ts);
 
@@ -96,13 +158,15 @@ pub fn upsert_session(
 
 pub fn insert_turn(pool: &Pool, t: &TurnUsage) -> Result<bool> {
     let conn = pool.get()?;
+    let estimated_cost_usd = pricing::estimate_cost_usd(t);
     let n = conn.execute(
         r#"INSERT OR IGNORE INTO turns (
              session_id, turn_uuid, ts, model_id,
              input_tokens, output_tokens,
              cache_creation_input_tokens, cache_read_input_tokens,
-             ephemeral_1h_tokens, ephemeral_5m_tokens, service_tier
-           ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)"#,
+             ephemeral_1h_tokens, ephemeral_5m_tokens, service_tier,
+             estimated_cost_usd
+           ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"#,
         params![
             t.session_id,
             t.turn_uuid,
@@ -115,6 +179,7 @@ pub fn insert_turn(pool: &Pool, t: &TurnUsage) -> Result<bool> {
             t.ephemeral_1h_tokens,
             t.ephemeral_5m_tokens,
             t.service_tier,
+            estimated_cost_usd,
         ],
     )?;
     Ok(n > 0)
