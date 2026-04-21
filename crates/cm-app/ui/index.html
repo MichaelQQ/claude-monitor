@@ -82,6 +82,52 @@
         <div id="trend-tokens" class="chart"></div>
       </div>
     </section>
+
+    <section id="view-session" class="view hidden">
+      <div class="detail-header">
+        <a href="#/sessions" class="back-link">← Back to sessions</a>
+        <h2 id="detail-title">Session</h2>
+        <div id="detail-sub" class="card-sub">—</div>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <div class="card-label">Turns</div>
+          <div id="detail-turns" class="card-value">—</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Total tokens</div>
+          <div id="detail-tokens" class="card-value">—</div>
+          <div id="detail-tokens-sub" class="card-sub">—</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Cost (snapshot)</div>
+          <div id="detail-cost-snap" class="card-value">—</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Cost (estimated)</div>
+          <div id="detail-cost-est" class="card-value">—</div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Per-turn tokens (stacked)</h2>
+        <div id="detail-chart" class="chart"></div>
+        <div class="legend">
+          <span><i style="background:#6aa9ff"></i> cache read</span>
+          <span><i style="background:#ffc36a"></i> cache create</span>
+          <span><i style="background:#8be28b"></i> input</span>
+          <span><i style="background:#ff7b7b"></i> output</span>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Snapshot timeline</h2>
+        <div id="detail-snap-chart" class="chart"></div>
+        <div class="legend">
+          <span><i style="background:#ffc36a"></i> cost (USD)</span>
+          <span><i style="background:#6aa9ff"></i> context used (%)</span>
+          <span><i style="background:#ff7b7b"></i> 5h limit (%)</span>
+        </div>
+      </div>
+    </section>
   </main>
   <script type="module" src="/app.js"></script>
 </body>

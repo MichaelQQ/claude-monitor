@@ -5,6 +5,10 @@ const state = {
   chart: null,
   trendCostChart: null,
   trendTokensChart: null,
+  detailChart: null,
+  detailSnapChart: null,
+  detailSessionId: null,
+  sessionsCache: null,
 };
 
 const $ = (s) => document.querySelector(s);
@@ -24,14 +28,28 @@ const fmtResets = (epoch) => {
   return 'resets ' + d.toLocaleDateString();
 };
 
-function setView(name) {
-  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.view === name));
-  document.querySelectorAll('.view').forEach(v => v.classList.toggle('hidden', v.id !== 'view-' + name));
-  if (name === 'sessions') loadSessions();
-  if (name === 'trends') loadTrends();
-  if (name === 'live') renderLiveChart();
+const VIEWS = ['live', 'sessions', 'trends', 'session'];
+
+function parseRoute() {
+  const h = location.hash.replace(/^#\/?/, '');
+  if (!h) return { name: 'live' };
+  const parts = h.split('/');
+  if (parts[0] === 'session' && parts[1]) return { name: 'session', id: parts[1] };
+  if (VIEWS.includes(parts[0])) return { name: parts[0] };
+  return { name: 'live' };
 }
-document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
+
+function applyRoute() {
+  const route = parseRoute();
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.view === route.name));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('hidden', v.id !== 'view-' + route.name));
+  if (route.name === 'sessions') loadSessions();
+  else if (route.name === 'trends') loadTrends();
+  else if (route.name === 'live') renderLiveChart();
+  else if (route.name === 'session') loadSessionDetail(route.id);
+}
+document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => { location.hash = '#/' + b.dataset.view; }));
+window.addEventListener('hashchange', applyRoute);
 
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -55,6 +73,7 @@ function handleEvent(ev) {
       state.activeSessionId = state.activeSessionId || session_id;
       renderLiveChart();
     }
+    if (state.detailSessionId === session_id) renderDetailChart(arr);
   }
 }
 
@@ -97,19 +116,9 @@ function renderLive() {
   if (!state.turnsBySession.has(state.activeSessionId)) loadTurnsForActive();
 }
 
-function renderLiveChart() {
-  const arr = state.turnsBySession.get(state.activeSessionId) || [];
-  const el = document.getElementById('live-chart');
-  if (!el) return;
-  if (arr.length === 0) { el.innerHTML = '<p style="color:var(--muted); padding:40px; text-align:center;">No turns yet. Fire up a Claude Code session.</p>'; if (state.chart) { state.chart.destroy(); state.chart = null; } return; }
-  const xs = arr.map(t => t.ts);
-  const cR = arr.map(t => t.cacheR);
-  const cC = arr.map(t => t.cacheC);
-  const inp = arr.map(t => t.input);
-  const out = arr.map(t => t.output);
-  const data = [xs, cR, cC, inp, out];
-  const opts = {
-    width: el.clientWidth, height: 280,
+function stackedTurnOpts(width) {
+  return {
+    width, height: 280,
     scales: { x: { time: true } },
     axes: [
       { stroke: '#8a93a6', grid: { stroke: '#242a36' } },
@@ -124,17 +133,32 @@ function renderLiveChart() {
     ],
     legend: { show: false },
   };
+}
+
+function turnsToChartData(arr) {
+  const xs = arr.map(t => t.ts);
+  return [xs, arr.map(t => t.cacheR), arr.map(t => t.cacheC), arr.map(t => t.input), arr.map(t => t.output)];
+}
+
+function renderLiveChart() {
+  const arr = state.turnsBySession.get(state.activeSessionId) || [];
+  const el = document.getElementById('live-chart');
+  if (!el) return;
+  if (arr.length === 0) { el.innerHTML = '<p style="color:var(--muted); padding:40px; text-align:center;">No turns yet. Fire up a Claude Code session.</p>'; if (state.chart) { state.chart.destroy(); state.chart = null; } return; }
   if (state.chart) state.chart.destroy();
-  state.chart = new uPlot(opts, data, el);
+  state.chart = new uPlot(stackedTurnOpts(el.clientWidth), turnsToChartData(arr), el);
 }
 
 async function loadSessions() {
   const r = await fetch('/v1/sessions');
   const rows = await r.json();
+  state.sessionsCache = rows;
   const tbody = document.querySelector('#sessions-table tbody');
   tbody.innerHTML = '';
   for (const s of rows) {
     const tr = document.createElement('tr');
+    tr.className = 'clickable';
+    tr.addEventListener('click', () => { location.hash = '#/session/' + s.session_id; });
     tr.innerHTML = `
       <td><code>${s.session_id.slice(0,8)}</code></td>
       <td>${escapeHtml(s.project_dir || '—')}</td>
@@ -185,13 +209,99 @@ function drawLine(elId, data, label, color, store, key) {
   store[key] = new uPlot(opts, data, el);
 }
 
+async function loadSessionDetail(id) {
+  state.detailSessionId = id;
+  let meta = state.sessionsCache && state.sessionsCache.find(s => s.session_id === id);
+  if (!meta) {
+    const r = await fetch('/v1/sessions');
+    state.sessionsCache = await r.json();
+    meta = state.sessionsCache.find(s => s.session_id === id);
+  }
+  if (meta) {
+    $('#detail-title').textContent = meta.project_dir || id;
+    $('#detail-sub').textContent = `${meta.session_id} · ${meta.model_id || 'unknown model'} · last seen ${new Date(meta.last_seen_at).toLocaleString()}`;
+    $('#detail-turns').textContent = fmtInt(meta.total_turns);
+    const totalTok = (meta.total_input_tokens || 0) + (meta.total_output_tokens || 0) + (meta.total_cache_read || 0) + (meta.total_cache_creation || 0);
+    $('#detail-tokens').textContent = fmtInt(totalTok);
+    $('#detail-tokens-sub').textContent = `in ${fmtInt(meta.total_input_tokens)} · out ${fmtInt(meta.total_output_tokens)} · cR ${fmtInt(meta.total_cache_read)} · cC ${fmtInt(meta.total_cache_creation)}`;
+    $('#detail-cost-snap').textContent = meta.last_cost_usd != null ? fmtMoney(meta.last_cost_usd) : '—';
+    $('#detail-cost-est').textContent = fmtMoneyPrecise(meta.estimated_cost_usd);
+  } else {
+    $('#detail-title').textContent = id;
+    $('#detail-sub').textContent = '—';
+  }
+
+  const [turnsR, snapsR] = await Promise.all([
+    fetch(`/v1/sessions/${id}/turns`).then(r => r.json()),
+    fetch(`/v1/sessions/${id}/snapshots`).then(r => r.json()),
+  ]);
+  const turns = turnsR.map(t => ({
+    ts: t.ts / 1000,
+    input: t.input_tokens,
+    output: t.output_tokens,
+    cacheC: t.cache_creation_input_tokens,
+    cacheR: t.cache_read_input_tokens,
+  }));
+  state.turnsBySession.set(id, turns);
+  renderDetailChart(turns);
+  renderDetailSnapshotChart(snapsR);
+}
+
+function renderDetailChart(arr) {
+  const el = document.getElementById('detail-chart');
+  if (!el) return;
+  if (arr.length === 0) { el.innerHTML = '<p style="color:var(--muted); padding:40px; text-align:center;">No turns recorded.</p>'; if (state.detailChart) { state.detailChart.destroy(); state.detailChart = null; } return; }
+  if (state.detailChart) state.detailChart.destroy();
+  state.detailChart = new uPlot(stackedTurnOpts(el.clientWidth), turnsToChartData(arr), el);
+}
+
+function renderDetailSnapshotChart(rows) {
+  const el = document.getElementById('detail-snap-chart');
+  if (!el) return;
+  if (!rows || rows.length === 0) { el.innerHTML = '<p style="color:var(--muted); padding:40px; text-align:center;">No snapshots recorded (statusline never ran for this session).</p>'; if (state.detailSnapChart) { state.detailSnapChart.destroy(); state.detailSnapChart = null; } return; }
+  const xs = rows.map(r => r.ts / 1000);
+  const cost = rows.map(r => r.total_cost_usd);
+  const ctx = rows.map(r => r.context_used_pct);
+  const five = rows.map(r => r.five_hour_pct);
+  const opts = {
+    width: el.clientWidth, height: 240,
+    scales: {
+      x: { time: true },
+      cost: {},
+      pct: { range: [0, 100] },
+    },
+    axes: [
+      { stroke: '#8a93a6', grid: { stroke: '#242a36' } },
+      { scale: 'cost', stroke: '#ffc36a', grid: { stroke: '#242a36' }, values: (u, vals) => vals.map(v => '$' + v.toFixed(2)) },
+      { scale: 'pct', side: 1, stroke: '#6aa9ff', grid: { show: false }, values: (u, vals) => vals.map(v => v + '%') },
+    ],
+    series: [
+      {},
+      { label: 'cost', scale: 'cost', stroke: '#ffc36a', width: 2, fill: 'rgba(255,195,106,0.15)' },
+      { label: 'context %', scale: 'pct', stroke: '#6aa9ff', width: 2 },
+      { label: '5h %', scale: 'pct', stroke: '#ff7b7b', width: 2, dash: [4, 4] },
+    ],
+    legend: { show: false },
+  };
+  if (state.detailSnapChart) state.detailSnapChart.destroy();
+  state.detailSnapChart = new uPlot(opts, [xs, cost, ctx, five], el);
+}
+
 function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
-window.addEventListener('resize', () => renderLiveChart());
+window.addEventListener('resize', () => {
+  renderLiveChart();
+  if (state.detailSessionId) {
+    const arr = state.turnsBySession.get(state.detailSessionId) || [];
+    renderDetailChart(arr);
+  }
+});
 connectWS();
+applyRoute();
 
 // Bootstrap: load sessions so we have something even before the first event.
 fetch('/v1/sessions').then(r => r.json()).then(rows => {
+  state.sessionsCache = rows;
   if (rows.length && !state.activeSessionId) {
     state.activeSessionId = rows[0].session_id;
     loadTurnsForActive();
