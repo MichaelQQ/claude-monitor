@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[lib]
+name = "cm_app"
+path = "src/lib.rs"
+
 [[bin]]
 name = "cm-app"
 path = "src/main.rs"

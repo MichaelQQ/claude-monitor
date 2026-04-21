@@ -30,14 +30,15 @@ Two ingestion paths by design:
 crates/
   cm-core/   # shared types (schema), SQLite setup, transcript JSONL parser
   cm-cli/    # the `cm` binary — statusline subcommand
-  cm-app/    # the daemon — axum server, transcript tailer, static UI
+  cm-app/    # daemon library + `cm-app` binary (pure axum, headless)
     ui/      # index.html / styles.css / app.js (uPlot, ES modules, no build)
+    src-tauri/  # `cm-app-tauri` binary — native window + tray, embeds the daemon
 ```
 
 ## Toolchain
 
 Pinned via mise (`mise.toml` at repo root):
-- Rust 1.86
+- Rust 1.88 (Tauri 2 needs ≥1.88)
 - Node 24 (only needed if you swap the UI for a bundled framework later)
 
 ```
@@ -47,10 +48,14 @@ mise install
 ## Build & run
 
 ```
-cargo build --release                     # builds cm-core, cm, cm-app
-./target/release/cm-app                   # starts the daemon
+cargo build --release                     # builds cm-core, cm, cm-app, cm-app-tauri
+./target/release/cm-app                   # headless daemon (browser tab)
+./target/release/cm-app-tauri             # native window + tray (embeds daemon)
 # Browser → http://127.0.0.1:$(cat ~/.claude/claude-monitor/port)/
 ```
+
+Closing the `cm-app-tauri` window hides it — the daemon keeps running in the
+tray. Use the tray menu's **Quit** to fully exit.
 
 Wire the CLI into Claude Code (`~/.claude/settings.json`):
 

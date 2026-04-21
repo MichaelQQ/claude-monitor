@@ -4,11 +4,12 @@ members = [
     "crates/cm-core",
     "crates/cm-cli",
     "crates/cm-app",
+    "crates/cm-app/src-tauri",
 ]
 
 [workspace.package]
 edition = "2021"
-rust-version = "1.86"
+rust-version = "1.88"
 license = "MIT"
 
 [workspace.dependencies]
