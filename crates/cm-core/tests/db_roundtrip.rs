@@ -1,7 +1,7 @@
 use cm_core::db;
 use cm_core::schema::{
     ContextWindow, Cost, CurrentUsage, Model, RateLimitWindow, RateLimits, StatuslineInput,
-    TurnUsage,
+    SubagentTask, TurnUsage,
 };
 
 fn sample_turn(uuid: &str) -> TurnUsage {
@@ -127,6 +127,41 @@ fn snapshot_insert_handles_absent_rate_limit_window() {
     assert_eq!(row.1, Some(1_738_425_600));
     assert_eq!(row.2, None);
     assert_eq!(row.3, None);
+}
+
+#[test]
+fn subagent_tasks_upsert_merges_fields_and_holds_first_seen() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let pool = db::open(tmp.path()).unwrap();
+    let t = SubagentTask {
+        id: "a1".into(),
+        name: Some("planner".into()),
+        task_type: Some("plan".into()),
+        status: Some("running".into()),
+        token_count: Some(1_234),
+        cwd: Some("/work".into()),
+        start_time: Some(1_700_000_000.0),
+        ..Default::default()
+    };
+    db::upsert_subagent_tasks(&pool, "s1", &[t.clone()], 1_000).unwrap();
+    let mut later = t.clone();
+    later.status = Some("done".into());
+    later.token_count = Some(5_678);
+    later.name = None; // absent fields must not wipe existing columns
+    db::upsert_subagent_tasks(&pool, "s1", &[later], 2_000).unwrap();
+    let conn = pool.get().unwrap();
+    let row: (String, Option<String>, Option<i64>, i64, i64) = conn
+        .query_row(
+            "SELECT status, name, token_count, first_seen_at, last_seen_at FROM subagent_tasks WHERE session_id='s1' AND task_id='a1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .unwrap();
+    assert_eq!(row.0, "done");
+    assert_eq!(row.1.as_deref(), Some("planner"));
+    assert_eq!(row.2, Some(5_678));
+    assert_eq!(row.3, 1_000);
+    assert_eq!(row.4, 2_000);
 }
 
 #[test]

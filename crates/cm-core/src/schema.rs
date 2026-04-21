@@ -98,10 +98,58 @@ pub struct TurnUsage {
     pub service_tier: Option<String>,
 }
 
+/// Input passed on stdin to a `subagentStatusLine` command by Claude Code.
+/// See https://code.claude.com/docs/en/statusline.md — the "Subagent status lines" section.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SubagentStatuslineInput {
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub transcript_path: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub columns: Option<i64>,
+    #[serde(default)]
+    pub tasks: Vec<SubagentTask>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct SubagentTask {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default, rename = "type")]
+    pub task_type: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default, rename = "startTime")]
+    pub start_time: Option<f64>,
+    #[serde(default, rename = "tokenCount")]
+    pub token_count: Option<i64>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
 /// Event published on the live broadcast channel.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LiveEvent {
     Snapshot(Box<StatuslineInput>),
     Turn(TurnUsage),
+    SubagentSnapshot(Box<SubagentSnapshotEvent>),
+}
+
+/// What we broadcast when a subagent-statusline hook fires. The stdin payload
+/// doesn't always carry session_id (docs say "base hook fields"), so the server
+/// resolves it from body-or-query and bundles it in.
+#[derive(Debug, Clone, Serialize)]
+pub struct SubagentSnapshotEvent {
+    pub session_id: String,
+    pub ts_ms: i64,
+    pub tasks: Vec<SubagentTask>,
 }

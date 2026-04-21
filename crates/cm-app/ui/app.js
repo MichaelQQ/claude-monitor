@@ -9,6 +9,7 @@ const state = {
   detailSnapChart: null,
   detailSessionId: null,
   sessionsCache: null,
+  subagentsBySession: new Map(), // session_id → Map(task_id → row)
 };
 
 const $ = (s) => document.querySelector(s);
@@ -74,6 +75,27 @@ function handleEvent(ev) {
       renderLiveChart();
     }
     if (state.detailSessionId === session_id) renderDetailChart(arr);
+  } else if (ev.kind === 'subagent_snapshot') {
+    const { session_id, ts_ms, tasks } = ev;
+    const map = state.subagentsBySession.get(session_id) || new Map();
+    for (const t of tasks || []) {
+      const prev = map.get(t.id) || {};
+      map.set(t.id, {
+        task_id: t.id,
+        name: t.name ?? prev.name ?? null,
+        task_type: t.type ?? prev.task_type ?? null,
+        status: t.status ?? prev.status ?? null,
+        description: t.description ?? prev.description ?? null,
+        label: t.label ?? prev.label ?? null,
+        start_time: t.startTime ?? prev.start_time ?? null,
+        token_count: t.tokenCount ?? prev.token_count ?? null,
+        cwd: t.cwd ?? prev.cwd ?? null,
+        first_seen_at: prev.first_seen_at ?? ts_ms,
+        last_seen_at: ts_ms,
+      });
+    }
+    state.subagentsBySession.set(session_id, map);
+    if (state.detailSessionId === session_id) renderSubagents(Array.from(map.values()));
   }
 }
 
@@ -222,9 +244,10 @@ async function loadSessionDetail(id) {
     $('#detail-sub').textContent = '—';
   }
 
-  const [turnsR, snapsR] = await Promise.all([
+  const [turnsR, snapsR, subsR] = await Promise.all([
     fetch(`/v1/sessions/${id}/turns`).then(r => r.json()),
     fetch(`/v1/sessions/${id}/snapshots`).then(r => r.json()),
+    fetch(`/v1/sessions/${id}/subagents`).then(r => r.json()),
   ]);
   const turns = turnsR.map(t => ({
     ts: t.ts / 1000,
@@ -234,8 +257,12 @@ async function loadSessionDetail(id) {
     cacheR: t.cache_read_input_tokens,
   }));
   state.turnsBySession.set(id, turns);
+  const subMap = new Map();
+  for (const s of subsR) subMap.set(s.task_id, s);
+  state.subagentsBySession.set(id, subMap);
   renderDetailChart(turns);
   renderDetailSnapshotChart(snapsR);
+  renderSubagents(subsR);
 }
 
 function renderDetailChart(arr) {
@@ -276,6 +303,42 @@ function renderDetailSnapshotChart(rows) {
   };
   if (state.detailSnapChart) state.detailSnapChart.destroy();
   state.detailSnapChart = new uPlot(opts, [xs, cost, ctx, five], el);
+}
+
+function renderSubagents(rows) {
+  const tbody = document.querySelector('#detail-subagents-table tbody');
+  const empty = document.getElementById('detail-subagents-empty');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  if (!rows || rows.length === 0) {
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+  const sorted = [...rows].sort((a, b) => (a.first_seen_at || 0) - (b.first_seen_at || 0));
+  for (const s of sorted) {
+    const tr = document.createElement('tr');
+    const elapsed = s.start_time ? fmtElapsed(Date.now() / 1000 - s.start_time) : '—';
+    tr.innerHTML = `
+      <td><code>${escapeHtml(String(s.task_id).slice(0, 8))}</code></td>
+      <td>${escapeHtml(s.name || s.label || '—')}</td>
+      <td>${escapeHtml(s.status || '—')}</td>
+      <td class="num">${s.token_count != null ? fmtInt(s.token_count) : '—'}</td>
+      <td class="num">${elapsed}</td>
+      <td>${escapeHtml(s.cwd || '—')}</td>
+      <td>${new Date(s.last_seen_at).toLocaleTimeString()}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function fmtElapsed(seconds) {
+  if (!seconds || seconds < 0) return '—';
+  const s = Math.floor(seconds);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
 }
 
 function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }

@@ -127,6 +127,19 @@
           <span><i style="background:#ff7b7b"></i> 5h limit (%)</span>
         </div>
       </div>
+      <div class="panel" id="detail-subagents-panel">
+        <h2>Subagents</h2>
+        <table id="detail-subagents-table">
+          <thead>
+            <tr>
+              <th>Task</th><th>Name</th><th>Status</th><th>Tokens</th>
+              <th>Elapsed</th><th>Cwd</th><th>Last seen</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <p id="detail-subagents-empty" style="padding:12px; color:var(--muted); display:none;">No subagents recorded for this session.</p>
+      </div>
     </section>
   </main>
   <script type="module" src="/app.js"></script>

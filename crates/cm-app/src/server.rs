@@ -7,7 +7,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
 use cm_core::db;
-use cm_core::schema::{LiveEvent, StatuslineInput};
+use cm_core::schema::{LiveEvent, StatuslineInput, SubagentSnapshotEvent, SubagentStatuslineInput};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,10 +18,12 @@ pub fn router(state: AppState) -> Router {
     let ui_dir = state.ui_dir.as_ref().clone();
     Router::new()
         .route("/v1/event", post(post_event))
+        .route("/v1/subagent-event", post(post_subagent_event))
         .route("/v1/live", get(ws_live))
         .route("/v1/sessions", get(list_sessions))
         .route("/v1/sessions/:id/turns", get(list_turns))
         .route("/v1/sessions/:id/snapshots", get(list_snapshots))
+        .route("/v1/sessions/:id/subagents", get(list_subagents))
         .route("/v1/trends", get(list_trends))
         .route("/v1/health", get(|| async { "ok" }))
         .fallback_service(ServeDir::new(ui_dir).append_index_html_on_directories(true))
@@ -56,6 +58,86 @@ async fn post_event(
 
 fn internal(e: anyhow::Error) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+}
+
+#[derive(Deserialize)]
+struct SubagentQuery {
+    session_id: Option<String>,
+}
+
+async fn post_subagent_event(
+    State(state): State<AppState>,
+    Query(q): Query<SubagentQuery>,
+    Json(raw): Json<Value>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let input: SubagentStatuslineInput = serde_json::from_value(raw)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("bad json: {e}")))?;
+    let session_id = input
+        .session_id
+        .clone()
+        .or(q.session_id)
+        .ok_or((StatusCode::BAD_REQUEST, "missing session_id".to_string()))?;
+    let ts = Utc::now().timestamp_millis();
+    db::upsert_subagent_tasks(&state.db, &session_id, &input.tasks, ts).map_err(internal)?;
+    let _ = state
+        .tx
+        .send(LiveEvent::SubagentSnapshot(Box::new(SubagentSnapshotEvent {
+            session_id,
+            ts_ms: ts,
+            tasks: input.tasks,
+        })));
+    Ok(StatusCode::ACCEPTED)
+}
+
+#[derive(Serialize)]
+struct SubagentRow {
+    task_id: String,
+    name: Option<String>,
+    task_type: Option<String>,
+    status: Option<String>,
+    description: Option<String>,
+    label: Option<String>,
+    start_time: Option<f64>,
+    token_count: Option<i64>,
+    cwd: Option<String>,
+    first_seen_at: i64,
+    last_seen_at: i64,
+}
+
+async fn list_subagents(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<SubagentRow>>, (StatusCode, String)> {
+    let conn = state.db.get().map_err(|e| internal(anyhow::anyhow!(e)))?;
+    let mut stmt = conn
+        .prepare(
+            r#"SELECT task_id, name, task_type, status, description, label,
+                      start_time, token_count, cwd, first_seen_at, last_seen_at
+                 FROM subagent_tasks
+                 WHERE session_id = ?1
+                 ORDER BY first_seen_at ASC"#,
+        )
+        .map_err(|e| internal(anyhow::anyhow!(e)))?;
+    let rows = stmt
+        .query_map([id], |r| {
+            Ok(SubagentRow {
+                task_id: r.get(0)?,
+                name: r.get(1)?,
+                task_type: r.get(2)?,
+                status: r.get(3)?,
+                description: r.get(4)?,
+                label: r.get(5)?,
+                start_time: r.get(6)?,
+                token_count: r.get(7)?,
+                cwd: r.get(8)?,
+                first_seen_at: r.get(9)?,
+                last_seen_at: r.get(10)?,
+            })
+        })
+        .map_err(|e| internal(anyhow::anyhow!(e)))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| internal(anyhow::anyhow!(e)))?;
+    Ok(Json(rows))
 }
 
 #[derive(Serialize)]

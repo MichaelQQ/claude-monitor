@@ -1,5 +1,5 @@
 use crate::pricing;
-use crate::schema::{StatuslineInput, TurnUsage};
+use crate::schema::{StatuslineInput, SubagentTask, TurnUsage};
 use anyhow::Result;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -132,6 +132,23 @@ CREATE TABLE IF NOT EXISTS tail_state (
     path    TEXT PRIMARY KEY,
     offset  INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS subagent_tasks (
+    session_id     TEXT NOT NULL,
+    task_id        TEXT NOT NULL,
+    name           TEXT,
+    task_type      TEXT,
+    status         TEXT,
+    description    TEXT,
+    label          TEXT,
+    start_time     REAL,
+    token_count    INTEGER,
+    cwd            TEXT,
+    first_seen_at  INTEGER NOT NULL,
+    last_seen_at   INTEGER NOT NULL,
+    PRIMARY KEY (session_id, task_id)
+);
+CREATE INDEX IF NOT EXISTS idx_subagent_tasks_session ON subagent_tasks(session_id, last_seen_at);
 "#;
 
 pub fn upsert_session(
@@ -218,6 +235,52 @@ pub fn insert_snapshot(pool: &Pool, s: &StatuslineInput, ts_ms: i64) -> Result<(
             seven.map(|s| s.resets_at),
         ],
     )?;
+    Ok(())
+}
+
+pub fn upsert_subagent_tasks(
+    pool: &Pool,
+    session_id: &str,
+    tasks: &[SubagentTask],
+    ts_ms: i64,
+) -> Result<()> {
+    let mut conn = pool.get()?;
+    let tx = conn.transaction()?;
+    {
+        let mut stmt = tx.prepare(
+            r#"INSERT INTO subagent_tasks (
+                 session_id, task_id, name, task_type, status,
+                 description, label, start_time, token_count, cwd,
+                 first_seen_at, last_seen_at
+               ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11)
+               ON CONFLICT(session_id, task_id) DO UPDATE SET
+                 name          = COALESCE(excluded.name, subagent_tasks.name),
+                 task_type     = COALESCE(excluded.task_type, subagent_tasks.task_type),
+                 status        = COALESCE(excluded.status, subagent_tasks.status),
+                 description   = COALESCE(excluded.description, subagent_tasks.description),
+                 label         = COALESCE(excluded.label, subagent_tasks.label),
+                 start_time    = COALESCE(excluded.start_time, subagent_tasks.start_time),
+                 token_count   = COALESCE(excluded.token_count, subagent_tasks.token_count),
+                 cwd           = COALESCE(excluded.cwd, subagent_tasks.cwd),
+                 last_seen_at  = excluded.last_seen_at"#,
+        )?;
+        for t in tasks {
+            stmt.execute(params![
+                session_id,
+                t.id,
+                t.name,
+                t.task_type,
+                t.status,
+                t.description,
+                t.label,
+                t.start_time,
+                t.token_count,
+                t.cwd,
+                ts_ms,
+            ])?;
+        }
+    }
+    tx.commit()?;
     Ok(())
 }
 
