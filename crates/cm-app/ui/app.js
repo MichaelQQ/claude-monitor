@@ -176,20 +176,11 @@ async function loadSessions() {
 }
 
 async function loadTrends() {
-  const r = await fetch('/v1/sessions');
+  const r = await fetch('/v1/trends?window=day');
   const rows = await r.json();
-  // Aggregate per UTC day.
-  const byDay = new Map();
-  for (const s of rows) {
-    const day = Math.floor(s.last_seen_at / 86400000) * 86400;
-    const cur = byDay.get(day) || { cost: 0, tokens: 0 };
-    cur.cost += s.last_cost_usd || 0;
-    cur.tokens += (s.total_input_tokens || 0) + (s.total_output_tokens || 0) + (s.total_cache_read || 0) + (s.total_cache_creation || 0);
-    byDay.set(day, cur);
-  }
-  const days = [...byDay.keys()].sort();
-  const costs = days.map(d => byDay.get(d).cost);
-  const tokens = days.map(d => byDay.get(d).tokens);
+  const days = rows.map(d => d.ts);
+  const costs = rows.map(d => d.total_cost_usd || 0);
+  const tokens = rows.map(d => d.total_tokens || 0);
   drawLine('trend-cost', [days, costs], 'cost', '#ffc36a', state, 'trendCostChart');
   drawLine('trend-tokens', [days, tokens], 'tokens', '#6aa9ff', state, 'trendTokensChart');
 }

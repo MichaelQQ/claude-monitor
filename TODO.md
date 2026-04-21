@@ -11,7 +11,7 @@ Ordered by value. Each item is self-contained enough to tackle in isolation.
 
 ## Medium value
 
-- [ ] **Trend aggregates server-side** — `loadTrends()` currently sums in the browser off session totals; good enough for now but not accurate across projects. Add `GET /v1/trends?window=day` that groups `turns.ts` in SQL.
+- [x] **Trend aggregates server-side** — `GET /v1/trends?window={hour|day|week}` groups `turns.ts` in SQL, returning `{ts, total_tokens, total_input_tokens, total_output_tokens, total_cache_read, total_cache_creation, total_cost_usd, turns}` per bucket. UI `loadTrends()` now calls the endpoint directly instead of summing session rows in the browser. **Follow-up:** window=month would need day-of-month arithmetic (SQLite `strftime`) rather than fixed-size buckets; not worth it yet.
 - [ ] **Rate-limit alerting** — push-notify when `five_hour_pct` crosses 80/95. Out of scope for the daemon; emit a desktop notification via `notify-rust` when wrapped in Tauri.
 - [ ] **Subagent row breakdown** — the `subagentStatusLine` feature (see statusline docs) emits a separate event shape with one row per subagent. Add `cm subagent-statusline` subcommand and a `subagent_turns` table if you want per-agent attribution.
 - [ ] **Compaction events** — transcript JSONL has `type:"summary"` and compact boundary markers. Mark these on the per-turn chart so the context-window drops make sense.

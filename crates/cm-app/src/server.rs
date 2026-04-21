@@ -1,6 +1,6 @@
 use crate::state::AppState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -9,7 +9,7 @@ use chrono::Utc;
 use cm_core::db;
 use cm_core::schema::{LiveEvent, StatuslineInput};
 use futures_util::{SinkExt, StreamExt};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
@@ -22,6 +22,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions", get(list_sessions))
         .route("/v1/sessions/:id/turns", get(list_turns))
         .route("/v1/sessions/:id/snapshots", get(list_snapshots))
+        .route("/v1/trends", get(list_trends))
         .route("/v1/health", get(|| async { "ok" }))
         .fallback_service(ServeDir::new(ui_dir).append_index_html_on_directories(true))
         .layer(CorsLayer::permissive())
@@ -204,6 +205,77 @@ async fn list_snapshots(
                 five_hour_resets_at: r.get(4)?,
                 seven_day_pct: r.get(5)?,
                 seven_day_resets_at: r.get(6)?,
+            })
+        })
+        .map_err(|e| internal(anyhow::anyhow!(e)))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| internal(anyhow::anyhow!(e)))?;
+    Ok(Json(rows))
+}
+
+#[derive(Deserialize)]
+struct TrendQuery {
+    window: Option<String>,
+}
+
+#[derive(Serialize)]
+struct TrendRow {
+    ts: i64,
+    total_tokens: i64,
+    total_input_tokens: i64,
+    total_output_tokens: i64,
+    total_cache_read: i64,
+    total_cache_creation: i64,
+    total_cost_usd: Option<f64>,
+    turns: i64,
+}
+
+async fn list_trends(
+    State(state): State<AppState>,
+    Query(params): Query<TrendQuery>,
+) -> Result<Json<Vec<TrendRow>>, (StatusCode, String)> {
+    let bucket_seconds: i64 = match params.window.as_deref().unwrap_or("day") {
+        "day" => 86_400,
+        "week" => 7 * 86_400,
+        "hour" => 3_600,
+        other => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("unsupported window '{other}' (expected hour|day|week)"),
+            ));
+        }
+    };
+    let bucket_ms = bucket_seconds * 1_000;
+    let conn = state.db.get().map_err(|e| internal(anyhow::anyhow!(e)))?;
+    let mut stmt = conn
+        .prepare(
+            r#"SELECT (ts / ?1) * ?2                  AS bucket_ts,
+                      SUM(input_tokens)               AS i,
+                      SUM(output_tokens)              AS o,
+                      SUM(cache_read_input_tokens)    AS cr,
+                      SUM(cache_creation_input_tokens) AS cc,
+                      SUM(estimated_cost_usd)         AS cost,
+                      COUNT(*)                        AS n
+                 FROM turns
+                 GROUP BY bucket_ts
+                 ORDER BY bucket_ts ASC"#,
+        )
+        .map_err(|e| internal(anyhow::anyhow!(e)))?;
+    let rows = stmt
+        .query_map([bucket_ms, bucket_seconds], |r| {
+            let i: i64 = r.get::<_, Option<i64>>(1)?.unwrap_or(0);
+            let o: i64 = r.get::<_, Option<i64>>(2)?.unwrap_or(0);
+            let cr: i64 = r.get::<_, Option<i64>>(3)?.unwrap_or(0);
+            let cc: i64 = r.get::<_, Option<i64>>(4)?.unwrap_or(0);
+            Ok(TrendRow {
+                ts: r.get(0)?,
+                total_tokens: i + o + cr + cc,
+                total_input_tokens: i,
+                total_output_tokens: o,
+                total_cache_read: cr,
+                total_cache_creation: cc,
+                total_cost_usd: r.get(5)?,
+                turns: r.get(6)?,
             })
         })
         .map_err(|e| internal(anyhow::anyhow!(e)))?
