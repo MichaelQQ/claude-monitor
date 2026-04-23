@@ -25,31 +25,32 @@
     <button data-view="live" class="active">Live</button>
     <button data-view="sessions">Sessions</button>
     <button data-view="trends">Trends</button>
+    <button data-view="help">Help</button>
   </nav>
   <main>
     <section id="view-live" class="view">
       <div class="cards">
-        <div class="card">
+        <div class="card" title="Model and project of the most recent statusline snapshot. Updates when Claude Code fires the statusLine hook.">
           <div class="card-label">Active session</div>
           <div id="live-session" class="card-value">—</div>
           <div id="live-project" class="card-sub">—</div>
         </div>
-        <div class="card">
+        <div class="card" title="Percent of the model's context window currently used, reported by the statusline snapshot. Turns amber ≥70%, red ≥90%.">
           <div class="card-label">Context window</div>
           <div id="live-ctx" class="card-value">—</div>
           <div class="bar"><div id="live-ctx-bar" class="bar-fill"></div></div>
         </div>
-        <div class="card">
+        <div class="card" title="Total cost of this session as reported by Claude Code (cost.total_cost_usd). Subtext shows wall time spent.">
           <div class="card-label">Session cost</div>
           <div id="live-cost" class="card-value">—</div>
           <div id="live-cost-sub" class="card-sub">—</div>
         </div>
-        <div class="card">
+        <div class="card" title="Percent of the 5-hour rate limit used. Claude.ai subscribers only — blank on API billing. Subtext shows when the window resets.">
           <div class="card-label">5-hour limit</div>
           <div id="live-5h" class="card-value">—</div>
           <div id="live-5h-sub" class="card-sub">—</div>
         </div>
-        <div class="card">
+        <div class="card" title="Percent of the 7-day (weekly) rate limit used. Claude.ai subscribers only. Subtext shows when the window resets.">
           <div class="card-label">7-day limit</div>
           <div id="live-7d" class="card-value">—</div>
           <div id="live-7d-sub" class="card-sub">—</div>
@@ -90,19 +91,19 @@
       <table id="sessions-table">
         <thead>
           <tr>
-            <th data-sort="session_id">Session</th>
-            <th data-sort="project_dir">Project</th>
-            <th data-sort="model_id">Model</th>
-            <th data-sort="total_turns" class="num">Turns</th>
-            <th data-sort="total_input_tokens" class="num">Input</th>
-            <th data-sort="total_output_tokens" class="num">Output</th>
-            <th data-sort="total_cache_read" class="num">Cache R</th>
+            <th data-sort="session_id" title="Claude Code session UUID (first 8 chars shown). Click the row to drill into turns, snapshots, and subagents.">Session</th>
+            <th data-sort="project_dir" title="Working directory the session was started in, decoded from Claude Code's ~/.claude/projects/ path encoding.">Project</th>
+            <th data-sort="model_id" title="Claude model ID seen on the most recent turn (e.g. claude-opus-4-7). Pricing falls back by family substring for unknown date suffixes.">Model</th>
+            <th data-sort="total_turns" class="num" title="Number of assistant turns recorded from the transcript tail (one per assistant message).">Turns</th>
+            <th data-sort="total_input_tokens" class="num" title="Sum of input_tokens across all turns. Weighted 1× toward the rate-limit quota.">Input</th>
+            <th data-sort="total_output_tokens" class="num" title="Sum of output_tokens across all turns. Weighted 5× toward the rate-limit quota — output is by far the heaviest.">Output</th>
+            <th data-sort="total_cache_read" class="num" title="Sum of cache_read_input_tokens. Weighted 0.1× toward quota — cached reads are cheap.">Cache R</th>
             <th data-sort="total_cache_write_5m" class="num" title="Cache writes with 5-minute TTL (weighted 1.25× for quota). Unattributed cache writes are counted here.">Cache W 5m</th>
             <th data-sort="total_cache_write_1h" class="num" title="Cache writes with 1-hour TTL (weighted 2× for quota).">Cache W 1h</th>
             <th data-sort="quota_tokens" class="num" title="Input-normalized token count against 5h/weekly quotas: input×1 + output×5 + cache_read×0.1 + cache_write_5m×1.25 + cache_write_1h×2">Quota tokens</th>
-            <th data-sort="last_cost_usd" class="num">Cost (snapshot)</th>
-            <th data-sort="estimated_cost_usd" class="num">Cost (est.)</th>
-            <th data-sort="last_seen_at">Last seen</th>
+            <th data-sort="last_cost_usd" class="num" title="Cost reported by Claude Code's statusline (cost.total_cost_usd) at the latest snapshot. Blank if the statusline hook never ran for this session.">Cost (snapshot)</th>
+            <th data-sort="estimated_cost_usd" class="num" title="Cost estimated locally by multiplying per-turn token counts against the pricing table in cm-core. Blank for unknown model families.">Cost (est.)</th>
+            <th data-sort="last_seen_at" title="Most recent turn or snapshot received for this session.">Last seen</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -120,6 +121,72 @@
       </div>
     </section>
 
+    <section id="view-help" class="view hidden">
+      <div class="panel help">
+        <h2>What this is</h2>
+        <p>claude-monitor is a local daemon that watches your Claude Code activity and surfaces it in this dashboard. It does two things in parallel:</p>
+        <ol>
+          <li><strong>Statusline snapshots</strong> — Claude Code calls <code>cm statusline</code> as a <code>statusLine</code> hook. Every call ships the raw JSON (cost, context window, rate limits) to the daemon.</li>
+          <li><strong>Transcript tail</strong> — a file watcher on <code>~/.claude/projects/**/*.jsonl</code> reads new assistant lines as they're written and records per-turn token counts. This works even without the statusline hook.</li>
+        </ol>
+        <p>All data lives in <code>~/.claude/claude-monitor/monitor.db</code> (SQLite, WAL). The UI streams updates from <code>/v1/live</code> over a WebSocket.</p>
+      </div>
+
+      <div class="panel help">
+        <h2>Getting data flowing</h2>
+        <ul>
+          <li>On macOS: <code>cm install</code> registers a LaunchAgent for the daemon and wires up the <code>statusLine</code> hook in <code>~/.claude/settings.json</code>. Run <code>cm uninstall</code> to reverse it.</li>
+          <li>On other platforms: start <code>cm-app</code> (or <code>cm-app-tauri</code>) yourself, and add <code>cm statusline</code> as a <code>statusLine</code> hook in your Claude Code settings.</li>
+          <li>The daemon binds <code>127.0.0.1:0</code> and writes the chosen port to <code>~/.claude/claude-monitor/port</code>. Pin one with <code>CM_PORT=NNNN</code>.</li>
+          <li>If the daemon isn't running when the statusline fires, payloads are appended to <code>~/.claude/claude-monitor/queue.jsonl</code> and drained on next start — no data lost.</li>
+        </ul>
+      </div>
+
+      <div class="panel help">
+        <h2>Views</h2>
+        <dl class="help-dl">
+          <dt>Live</dt>
+          <dd>Cards for the active session (model, project, context-window %, session cost, 5h/7d limits) plus a per-turn token chart. Updates in real time as turns and snapshots stream in.</dd>
+          <dt>Sessions</dt>
+          <dd>Every session the daemon has seen. Filter by time range and model, sort any column, hide columns via the <em>Columns ▾</em> button, resize columns by dragging the right edge. Click a row to drill into that session.</dd>
+          <dt>Trends</dt>
+          <dd>Daily cost (USD) and daily total tokens, bucketed server-side from <code>/v1/trends?window=day</code>.</dd>
+          <dt>Session detail</dt>
+          <dd>Opened by clicking a row in Sessions. Shows totals, per-turn stacked tokens, snapshot timeline (cost / context% / 5h%), and any subagents that ran.</dd>
+        </dl>
+      </div>
+
+      <div class="panel help">
+        <h2>Column reference</h2>
+        <p>Hover any column header or card for a tooltip. The ones worth calling out:</p>
+        <dl class="help-dl">
+          <dt>Quota tokens</dt>
+          <dd>Input-normalized count used for 5h/weekly quota accounting: <code>input×1 + output×5 + cache_read×0.1 + cache_write_5m×1.25 + cache_write_1h×2</code>. This weighting mirrors how Anthropic publicly describes rate-limit math. The <em>% 5h</em> / <em>% weekly</em> suffix is derived by inverting <code>used_percentage</code> from the latest statusline snapshot against the matching turn-token window.</dd>
+          <dt>Cost (snapshot) vs Cost (est.)</dt>
+          <dd><strong>Snapshot</strong> is whatever Claude Code's statusline reported last (<code>cost.total_cost_usd</code>). <strong>Estimated</strong> is computed locally by pricing each turn against <code>cm-core</code>'s pricing table. Snapshot is empty if the statusline hook never ran; estimated is empty for unknown model families (no generic fallback, by design).</dd>
+          <dt>Cache R / Cache W 5m / Cache W 1h</dt>
+          <dd>Prompt-caching token counts. Reads are the cheapest (0.1×), 5-minute writes sit in the middle (1.25×), 1-hour writes are the most expensive (2×). Unattributed cache-creation bytes are counted toward the 5m bucket.</dd>
+          <dt>Last seen</dt>
+          <dd>Most recent turn or snapshot timestamp. Drives the default sort and the time-range filter.</dd>
+        </dl>
+      </div>
+
+      <div class="panel help">
+        <h2>HTTP surface</h2>
+        <p>The daemon exposes a small JSON API on the same port as this UI:</p>
+        <ul class="help-api">
+          <li><code>GET /v1/health</code> — liveness</li>
+          <li><code>GET /v1/sessions</code> — rollups</li>
+          <li><code>GET /v1/sessions/:id/turns</code> — per-turn rows</li>
+          <li><code>GET /v1/sessions/:id/snapshots</code> — statusline snapshots</li>
+          <li><code>GET /v1/sessions/:id/subagents</code> — subagent tasks</li>
+          <li><code>GET /v1/trends?window=hour|day|week</code> — bucketed totals</li>
+          <li><code>GET /v1/quota-caps</code> — estimated absolute 5h/weekly caps</li>
+          <li><code>GET /v1/live</code> — WebSocket, broadcasts <code>snapshot</code> / <code>turn</code> / <code>subagent_snapshot</code> events</li>
+        </ul>
+      </div>
+    </section>
+
     <section id="view-session" class="view hidden">
       <div class="detail-header">
         <a href="#/sessions" class="back-link">← Back to sessions</a>
@@ -127,20 +194,20 @@
         <div id="detail-sub" class="card-sub">—</div>
       </div>
       <div class="cards">
-        <div class="card">
+        <div class="card" title="Number of assistant turns recorded from the transcript tail for this session.">
           <div class="card-label">Turns</div>
           <div id="detail-turns" class="card-value">—</div>
         </div>
-        <div class="card">
+        <div class="card" title="Total input + output + cache-read + cache-creation tokens across all turns. Subtext breaks the total down by type.">
           <div class="card-label">Total tokens</div>
           <div id="detail-tokens" class="card-value">—</div>
           <div id="detail-tokens-sub" class="card-sub">—</div>
         </div>
-        <div class="card">
+        <div class="card" title="Cost reported by Claude Code's statusline at the latest snapshot. Blank if the statusline hook never ran for this session.">
           <div class="card-label">Cost (snapshot)</div>
           <div id="detail-cost-snap" class="card-value">—</div>
         </div>
-        <div class="card">
+        <div class="card" title="Cost estimated locally by multiplying per-turn token counts against the pricing table in cm-core.">
           <div class="card-label">Cost (estimated)</div>
           <div id="detail-cost-est" class="card-value">—</div>
         </div>
@@ -169,8 +236,13 @@
         <table id="detail-subagents-table">
           <thead>
             <tr>
-              <th>Task</th><th>Name</th><th>Status</th><th>Tokens</th>
-              <th>Elapsed</th><th>Cwd</th><th>Last seen</th>
+              <th title="Subagent task ID (first 8 chars) from the subagentStatusLine hook payload.">Task</th>
+              <th title="Subagent name if reported, otherwise the task label.">Name</th>
+              <th title="Subagent lifecycle state reported by Claude Code (e.g. running, done, error).">Status</th>
+              <th class="num" title="Current token count reported by the subagent, if available.">Tokens</th>
+              <th class="num" title="Time since the subagent's startTime, updated on each snapshot.">Elapsed</th>
+              <th title="Working directory the subagent is running in.">Cwd</th>
+              <th title="Timestamp of the most recent subagent snapshot.">Last seen</th>
             </tr>
           </thead>
           <tbody></tbody>

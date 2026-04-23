@@ -46,7 +46,7 @@ const fmtResets = (epoch) => {
   return 'resets ' + d.toLocaleDateString();
 };
 
-const VIEWS = ['live', 'sessions', 'trends', 'session'];
+const VIEWS = ['live', 'sessions', 'trends', 'help', 'session'];
 
 function parseRoute() {
   const h = location.hash.replace(/^#\/?/, '');

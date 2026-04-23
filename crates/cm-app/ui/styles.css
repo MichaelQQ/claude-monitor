@@ -101,3 +101,18 @@ tbody tr.clickable:hover { background: var(--hover-bg); }
 
 :root[data-theme="light"] .u-legend,
 :root[data-theme="light"] .uplot { color: var(--fg); }
+
+th[title], .card[title] { cursor: help; }
+th[title]:hover, .card[title]:hover { color: var(--fg); }
+
+.panel.help { line-height: 1.55; }
+.panel.help p, .panel.help ul, .panel.help ol, .panel.help dl { margin: 0 0 10px; }
+.panel.help ul, .panel.help ol { padding-left: 20px; }
+.panel.help li { margin-bottom: 4px; }
+.panel.help code { background: var(--th-bg); padding: 1px 5px; border-radius: 3px; color: var(--fg); font-size: 12px; }
+.panel.help strong { color: var(--fg); }
+.help-dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; }
+.help-dl dt { color: var(--accent); font-weight: 600; }
+.help-dl dd { margin: 0; color: var(--fg); }
+.help-api { list-style: none; padding-left: 0 !important; }
+.help-api li { margin-bottom: 4px; }
