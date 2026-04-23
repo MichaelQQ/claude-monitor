@@ -21,6 +21,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/subagent-event", post(post_subagent_event))
         .route("/v1/live", get(ws_live))
         .route("/v1/sessions", get(list_sessions))
+        .route("/v1/quota-caps", get(quota_caps))
         .route("/v1/sessions/:id/turns", get(list_turns))
         .route("/v1/sessions/:id/snapshots", get(list_snapshots))
         .route("/v1/sessions/:id/subagents", get(list_subagents))
@@ -152,6 +153,9 @@ struct SessionRow {
     total_output_tokens: i64,
     total_cache_read: i64,
     total_cache_creation: i64,
+    total_cache_write_5m: i64,
+    total_cache_write_1h: i64,
+    quota_tokens: i64,
     last_cost_usd: Option<f64>,
     estimated_cost_usd: Option<f64>,
 }
@@ -163,6 +167,8 @@ async fn list_sessions(State(state): State<AppState>) -> Result<Json<Vec<Session
             r#"SELECT s.session_id, s.project_dir, s.model_id, s.started_at, s.last_seen_at,
                       COALESCE(t.n,0), COALESCE(t.i,0), COALESCE(t.o,0),
                       COALESCE(t.cr,0), COALESCE(t.cc,0),
+                      COALESCE(t.cw5,0), COALESCE(t.cw1,0),
+                      CAST(COALESCE(t.quota,0) AS INTEGER),
                       (SELECT total_cost_usd FROM snapshots
                          WHERE session_id=s.session_id
                          ORDER BY ts DESC LIMIT 1),
@@ -174,7 +180,17 @@ async fn list_sessions(State(state): State<AppState>) -> Result<Json<Vec<Session
                           SUM(input_tokens) i, SUM(output_tokens) o,
                           SUM(cache_read_input_tokens) cr,
                           SUM(cache_creation_input_tokens) cc,
-                          SUM(estimated_cost_usd) est
+                          SUM(ephemeral_5m_tokens + iif(cache_creation_input_tokens > ephemeral_5m_tokens + ephemeral_1h_tokens, cache_creation_input_tokens - ephemeral_5m_tokens - ephemeral_1h_tokens, 0)) cw5,
+                          SUM(ephemeral_1h_tokens) cw1,
+                          SUM(estimated_cost_usd) est,
+                          SUM(
+                            input_tokens * 1.0
+                            + output_tokens * 5.0
+                            + cache_read_input_tokens * 0.1
+                            + ephemeral_5m_tokens * 1.25
+                            + ephemeral_1h_tokens * 2.0
+                            + iif(cache_creation_input_tokens > ephemeral_5m_tokens + ephemeral_1h_tokens, cache_creation_input_tokens - ephemeral_5m_tokens - ephemeral_1h_tokens, 0) * 1.25
+                          ) quota
                    FROM turns GROUP BY session_id
                  ) t ON t.session_id = s.session_id
                  ORDER BY s.last_seen_at DESC"#,
@@ -193,14 +209,70 @@ async fn list_sessions(State(state): State<AppState>) -> Result<Json<Vec<Session
                 total_output_tokens: r.get(7)?,
                 total_cache_read: r.get(8)?,
                 total_cache_creation: r.get(9)?,
-                last_cost_usd: r.get(10)?,
-                estimated_cost_usd: r.get(11)?,
+                total_cache_write_5m: r.get(10)?,
+                total_cache_write_1h: r.get(11)?,
+                quota_tokens: r.get(12)?,
+                last_cost_usd: r.get(13)?,
+                estimated_cost_usd: r.get(14)?,
             })
         })
         .map_err(|e| internal(anyhow::anyhow!(e)))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| internal(anyhow::anyhow!(e)))?;
     Ok(Json(rows))
+}
+
+#[derive(Serialize)]
+struct QuotaCaps {
+    five_hour: Option<i64>,
+    weekly: Option<i64>,
+    derived_from_ts: Option<i64>,
+}
+
+async fn quota_caps(State(state): State<AppState>) -> Result<Json<QuotaCaps>, (StatusCode, String)> {
+    let conn = state.db.get().map_err(|e| internal(anyhow::anyhow!(e)))?;
+    // Latest snapshot with at least one non-null pct > 0.
+    let latest: Option<(i64, Option<f64>, Option<f64>)> = conn
+        .query_row(
+            r#"SELECT ts, five_hour_pct, seven_day_pct FROM snapshots
+                 WHERE (five_hour_pct IS NOT NULL AND five_hour_pct > 0)
+                    OR (seven_day_pct  IS NOT NULL AND seven_day_pct  > 0)
+                 ORDER BY ts DESC LIMIT 1"#,
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .ok();
+    let Some((ts, p5_opt, p7_opt)) = latest else {
+        return Ok(Json(QuotaCaps {
+            five_hour: None,
+            weekly: None,
+            derived_from_ts: None,
+        }));
+    };
+    const QUOTA_SQL: &str = r#"SELECT COALESCE(SUM(
+        input_tokens * 1.0
+        + output_tokens * 5.0
+        + cache_read_input_tokens * 0.1
+        + ephemeral_5m_tokens * 1.25
+        + ephemeral_1h_tokens * 2.0
+        + iif(cache_creation_input_tokens > ephemeral_5m_tokens + ephemeral_1h_tokens,
+              cache_creation_input_tokens - ephemeral_5m_tokens - ephemeral_1h_tokens, 0) * 1.25
+      ), 0) FROM turns WHERE ts > ?1 AND ts <= ?2"#;
+    let derive = |window_ms: i64, pct: Option<f64>| -> Option<i64> {
+        let p = pct.filter(|p| *p > 0.0)?;
+        let sum: f64 = conn
+            .query_row(QUOTA_SQL, [ts - window_ms, ts], |r| r.get(0))
+            .ok()?;
+        if sum <= 0.0 {
+            return None;
+        }
+        Some((sum / (p / 100.0)) as i64)
+    };
+    Ok(Json(QuotaCaps {
+        five_hour: derive(5 * 3600 * 1000, p5_opt),
+        weekly: derive(7 * 86400 * 1000, p7_opt),
+        derived_from_ts: Some(ts),
+    }))
 }
 
 #[derive(Serialize)]

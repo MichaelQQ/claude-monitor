@@ -60,12 +60,41 @@
     </section>
 
     <section id="view-sessions" class="view hidden">
+      <div class="table-toolbar">
+        <label class="toolbar-field">
+          <span>Range</span>
+          <select id="sessions-range" class="toolbar-select">
+            <option value="24h">Last 24 hours</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="all" selected>All time</option>
+          </select>
+        </label>
+        <div class="toolbar-field toolbar-dropdown">
+          <span>Model</span>
+          <button id="sessions-model-btn" class="toolbar-btn">All models ▾</button>
+          <div id="sessions-model-menu" class="popover hidden"></div>
+        </div>
+        <span class="toolbar-spacer"></span>
+        <button id="sessions-columns-btn" class="toolbar-btn">Columns ▾</button>
+        <div id="sessions-columns-menu" class="popover hidden"></div>
+      </div>
       <table id="sessions-table">
         <thead>
           <tr>
-            <th>Session</th><th>Project</th><th>Model</th><th>Turns</th>
-            <th>Input</th><th>Output</th><th>Cache R</th><th>Cache C</th>
-            <th>Cost (snapshot)</th><th>Cost (est.)</th><th>Last seen</th>
+            <th data-sort="session_id">Session</th>
+            <th data-sort="project_dir">Project</th>
+            <th data-sort="model_id">Model</th>
+            <th data-sort="total_turns" class="num">Turns</th>
+            <th data-sort="total_input_tokens" class="num">Input</th>
+            <th data-sort="total_output_tokens" class="num">Output</th>
+            <th data-sort="total_cache_read" class="num">Cache R</th>
+            <th data-sort="total_cache_write_5m" class="num" title="Cache writes with 5-minute TTL (weighted 1.25× for quota). Unattributed cache writes are counted here.">Cache W 5m</th>
+            <th data-sort="total_cache_write_1h" class="num" title="Cache writes with 1-hour TTL (weighted 2× for quota).">Cache W 1h</th>
+            <th data-sort="quota_tokens" class="num" title="Input-normalized token count against 5h/weekly quotas: input×1 + output×5 + cache_read×0.1 + cache_write_5m×1.25 + cache_write_1h×2">Quota tokens</th>
+            <th data-sort="last_cost_usd" class="num">Cost (snapshot)</th>
+            <th data-sort="estimated_cost_usd" class="num">Cost (est.)</th>
+            <th data-sort="last_seen_at">Last seen</th>
           </tr>
         </thead>
         <tbody></tbody>

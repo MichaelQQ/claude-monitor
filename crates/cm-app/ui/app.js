@@ -9,6 +9,11 @@ const state = {
   detailSnapChart: null,
   detailSessionId: null,
   sessionsCache: null,
+  sessionsSort: { key: 'last_seen_at', dir: 'desc' },
+  hiddenCols: new Set(JSON.parse(localStorage.getItem('sessions-hidden-cols') || '[]')),
+  sessionsRange: localStorage.getItem('sessions-range') || 'all',
+  sessionsModels: new Set(JSON.parse(localStorage.getItem('sessions-models') || '[]')),
+  quotaCaps: { five_hour: null, weekly: null },
   subagentsBySession: new Map(), // session_id → Map(task_id → row)
 };
 
@@ -17,6 +22,14 @@ const fmtInt = (n) => (n ?? 0).toLocaleString();
 const fmtMoney = (n) => '$' + (n ?? 0).toFixed(2);
 const fmtMoneyPrecise = (n) => n == null ? '—' : '$' + n.toFixed(4);
 const fmtPct = (n) => n == null ? '—' : Math.round(n) + '%';
+function fmtQuotaWithPct(tokens) {
+  const base = fmtInt(tokens);
+  const caps = state.quotaCaps || {};
+  const parts = [];
+  if (caps.five_hour && caps.five_hour > 0) parts.push(`${((tokens / caps.five_hour) * 100).toFixed(1)}% 5h`);
+  if (caps.weekly    && caps.weekly    > 0) parts.push(`${((tokens / caps.weekly)    * 100).toFixed(1)}% weekly`);
+  return parts.length ? `${base} <span class="muted-inline">(${parts.join(', ')})</span>` : base;
+}
 const fmtResets = (epoch) => {
   if (!epoch) return '—';
   const d = new Date(epoch * 1000);
@@ -172,12 +185,86 @@ function renderLiveChart() {
 }
 
 async function loadSessions() {
-  const r = await fetch('/v1/sessions');
-  const rows = await r.json();
-  state.sessionsCache = rows;
+  const [sessRes, capsRes] = await Promise.all([
+    fetch('/v1/sessions'),
+    fetch('/v1/quota-caps'),
+  ]);
+  state.sessionsCache = await sessRes.json();
+  if (capsRes.ok) state.quotaCaps = await capsRes.json();
+  refreshModelFilterOptions();
+  renderSessionsTable();
+}
+
+const RANGE_MS = { '24h': 86400e3, '7d': 7 * 86400e3, '30d': 30 * 86400e3 };
+
+function refreshModelFilterOptions() {
+  const menu = document.getElementById('sessions-model-menu');
+  const btn = document.getElementById('sessions-model-btn');
+  if (!menu || !btn) return;
+  const models = Array.from(new Set((state.sessionsCache || []).map(s => s.model_id).filter(Boolean))).sort();
+  // Prune selections that no longer exist in the current session set.
+  for (const m of [...state.sessionsModels]) if (!models.includes(m)) state.sessionsModels.delete(m);
+  menu.innerHTML = '';
+  if (models.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'col-pick';
+    empty.style.color = 'var(--muted)';
+    empty.textContent = 'No models yet';
+    menu.appendChild(empty);
+  }
+  for (const m of models) {
+    const row = document.createElement('label');
+    row.className = 'col-pick';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = state.sessionsModels.has(m);
+    cb.addEventListener('change', () => {
+      if (cb.checked) state.sessionsModels.add(m);
+      else state.sessionsModels.delete(m);
+      localStorage.setItem('sessions-models', JSON.stringify([...state.sessionsModels]));
+      updateModelBtnLabel();
+      renderSessionsTable();
+    });
+    row.appendChild(cb);
+    row.appendChild(document.createTextNode(' ' + m));
+    menu.appendChild(row);
+  }
+  updateModelBtnLabel();
+}
+
+function updateModelBtnLabel() {
+  const btn = document.getElementById('sessions-model-btn');
+  if (!btn) return;
+  const n = state.sessionsModels.size;
+  btn.textContent = (n === 0 ? 'All models' : `${n} model${n === 1 ? '' : 's'}`) + ' ▾';
+}
+
+function renderSessionsTable() {
+  const all = state.sessionsCache || [];
+  const cutoff = RANGE_MS[state.sessionsRange] ? Date.now() - RANGE_MS[state.sessionsRange] : null;
+  const models = state.sessionsModels;
+  const rows = all.filter(s => {
+    if (cutoff != null && new Date(s.last_seen_at).getTime() < cutoff) return false;
+    if (models.size > 0 && !models.has(s.model_id)) return false;
+    return true;
+  });
+  const { key, dir } = state.sessionsSort;
+  const mult = dir === 'asc' ? 1 : -1;
+  const sorted = [...rows].sort((a, b) => {
+    const av = a[key], bv = b[key];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * mult;
+    return String(av).localeCompare(String(bv)) * mult;
+  });
+  document.querySelectorAll('#sessions-table th[data-sort]').forEach(th => {
+    th.classList.toggle('sort-asc', th.dataset.sort === key && dir === 'asc');
+    th.classList.toggle('sort-desc', th.dataset.sort === key && dir === 'desc');
+  });
   const tbody = document.querySelector('#sessions-table tbody');
   tbody.innerHTML = '';
-  for (const s of rows) {
+  for (const s of sorted) {
     const tr = document.createElement('tr');
     tr.className = 'clickable';
     tr.addEventListener('click', () => { location.hash = '#/session/' + s.session_id; });
@@ -189,13 +276,145 @@ async function loadSessions() {
       <td class="num">${fmtInt(s.total_input_tokens)}</td>
       <td class="num">${fmtInt(s.total_output_tokens)}</td>
       <td class="num">${fmtInt(s.total_cache_read)}</td>
-      <td class="num">${fmtInt(s.total_cache_creation)}</td>
+      <td class="num">${fmtInt(s.total_cache_write_5m)}</td>
+      <td class="num">${fmtInt(s.total_cache_write_1h)}</td>
+      <td class="num">${fmtQuotaWithPct(s.quota_tokens)}</td>
       <td class="num">${s.last_cost_usd != null ? fmtMoney(s.last_cost_usd) : '—'}</td>
       <td class="num">${fmtMoneyPrecise(s.estimated_cost_usd)}</td>
       <td>${new Date(s.last_seen_at).toLocaleString()}</td>`;
     tbody.appendChild(tr);
   }
+  applyHiddenCols();
 }
+
+function applyHiddenCols() {
+  const table = document.querySelector('#sessions-table');
+  if (!table) return;
+  const ths = table.querySelectorAll('thead th');
+  const hiddenIdx = [];
+  ths.forEach((th, i) => {
+    const h = state.hiddenCols.has(th.dataset.sort);
+    th.classList.toggle('col-hidden', h);
+    if (h) hiddenIdx.push(i);
+  });
+  table.querySelectorAll('tbody tr').forEach(tr => {
+    Array.from(tr.children).forEach((td, i) => {
+      td.classList.toggle('col-hidden', hiddenIdx.includes(i));
+    });
+  });
+}
+
+function initColumnPicker() {
+  const menu = document.getElementById('sessions-columns-menu');
+  const btn = document.getElementById('sessions-columns-btn');
+  if (!menu || !btn) return;
+  const ths = document.querySelectorAll('#sessions-table thead th');
+  ths.forEach(th => {
+    const key = th.dataset.sort;
+    const label = (th.firstChild && th.firstChild.nodeType === 3 ? th.firstChild.nodeValue : th.textContent).trim();
+    const row = document.createElement('label');
+    row.className = 'col-pick';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !state.hiddenCols.has(key);
+    cb.addEventListener('change', () => {
+      if (cb.checked) state.hiddenCols.delete(key);
+      else state.hiddenCols.add(key);
+      localStorage.setItem('sessions-hidden-cols', JSON.stringify([...state.hiddenCols]));
+      applyHiddenCols();
+    });
+    row.appendChild(cb);
+    row.appendChild(document.createTextNode(' ' + label));
+    menu.appendChild(row);
+  });
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    menu.classList.toggle('hidden');
+  });
+  document.addEventListener('click', (e) => {
+    if (!menu.contains(e.target) && e.target !== btn) menu.classList.add('hidden');
+  });
+}
+initColumnPicker();
+applyHiddenCols();
+
+function initSessionFilters() {
+  const range = document.getElementById('sessions-range');
+  if (range) {
+    range.value = state.sessionsRange;
+    range.addEventListener('change', () => {
+      state.sessionsRange = range.value;
+      localStorage.setItem('sessions-range', range.value);
+      renderSessionsTable();
+    });
+  }
+  const btn = document.getElementById('sessions-model-btn');
+  const menu = document.getElementById('sessions-model-menu');
+  if (btn && menu) {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.classList.toggle('hidden');
+    });
+    document.addEventListener('click', (e) => {
+      if (!menu.contains(e.target) && e.target !== btn) menu.classList.add('hidden');
+    });
+    updateModelBtnLabel();
+  }
+}
+initSessionFilters();
+
+document.querySelectorAll('#sessions-table th[data-sort]').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.sort;
+    if (state.sessionsSort.key === key) {
+      state.sessionsSort.dir = state.sessionsSort.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      state.sessionsSort.key = key;
+      state.sessionsSort.dir = (key === 'project_dir' || key === 'model_id' || key === 'session_id') ? 'asc' : 'desc';
+    }
+    renderSessionsTable();
+  });
+});
+
+function makeColumnsResizable(tableSelector) {
+  const table = document.querySelector(tableSelector);
+  if (!table) return;
+  let locked = false;
+  const lockWidths = () => {
+    if (locked) return;
+    table.querySelectorAll('thead th').forEach(th => { th.style.width = th.offsetWidth + 'px'; });
+    table.style.tableLayout = 'fixed';
+    locked = true;
+  };
+  table.querySelectorAll('thead th').forEach(th => {
+    const handle = document.createElement('span');
+    handle.className = 'col-resizer';
+    handle.addEventListener('click', e => e.stopPropagation());
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      lockWidths();
+      const startX = e.clientX;
+      const startW = th.offsetWidth;
+      handle.classList.add('dragging');
+      table.classList.add('resizing');
+      const onMove = (ev) => {
+        const w = Math.max(40, startW + ev.clientX - startX);
+        th.style.width = w + 'px';
+      };
+      const onUp = () => {
+        handle.classList.remove('dragging');
+        table.classList.remove('resizing');
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
+    th.appendChild(handle);
+  });
+}
+makeColumnsResizable('#sessions-table');
 
 async function loadTrends() {
   const r = await fetch('/v1/trends?window=day');
