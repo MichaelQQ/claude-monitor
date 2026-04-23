@@ -23,6 +23,11 @@ function chartColors() {
   return { axis: cssVar('--muted') || '#8a93a6', grid: cssVar('--line') || '#242a36' };
 }
 const fmtInt = (n) => (n ?? 0).toLocaleString();
+function projectName(dir) {
+  if (!dir) return '';
+  const parts = String(dir).split('/').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : dir;
+}
 const fmtMoney = (n) => '$' + (n ?? 0).toFixed(2);
 const fmtMoneyPrecise = (n) => n == null ? '—' : '$' + n.toFixed(4);
 const fmtPct = (n) => n == null ? '—' : Math.round(n) + '%';
@@ -255,8 +260,9 @@ function renderSessionsTable() {
   });
   const { key, dir } = state.sessionsSort;
   const mult = dir === 'asc' ? 1 : -1;
+  const sortVal = (row) => key === 'project_name' ? projectName(row.project_dir) : row[key];
   const sorted = [...rows].sort((a, b) => {
-    const av = a[key], bv = b[key];
+    const av = sortVal(a), bv = sortVal(b);
     if (av == null && bv == null) return 0;
     if (av == null) return 1;
     if (bv == null) return -1;
@@ -275,7 +281,8 @@ function renderSessionsTable() {
     tr.addEventListener('click', () => { location.hash = '#/session/' + s.session_id; });
     tr.innerHTML = `
       <td><code>${s.session_id.slice(0,8)}</code></td>
-      <td>${escapeHtml(s.project_dir || '—')}</td>
+      <td>${escapeHtml(projectName(s.project_dir) || '—')}</td>
+      <td title="${escapeHtml(s.project_dir || '')}">${escapeHtml(s.project_dir || '—')}</td>
       <td>${escapeHtml(s.model_id || '—')}</td>
       <td class="num">${fmtInt(s.total_turns)}</td>
       <td class="num">${fmtInt(s.total_input_tokens)}</td>
@@ -375,7 +382,7 @@ document.querySelectorAll('#sessions-table th[data-sort]').forEach(th => {
       state.sessionsSort.dir = state.sessionsSort.dir === 'asc' ? 'desc' : 'asc';
     } else {
       state.sessionsSort.key = key;
-      state.sessionsSort.dir = (key === 'project_dir' || key === 'model_id' || key === 'session_id') ? 'asc' : 'desc';
+      state.sessionsSort.dir = (key === 'project_name' || key === 'project_dir' || key === 'model_id' || key === 'session_id') ? 'asc' : 'desc';
     }
     renderSessionsTable();
   });

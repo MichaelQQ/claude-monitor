@@ -92,7 +92,8 @@
         <thead>
           <tr>
             <th data-sort="session_id" title="Claude Code session UUID (first 8 chars shown). Click the row to drill into turns, snapshots, and subagents.">Session</th>
-            <th data-sort="project_dir" title="Working directory the session was started in, decoded from Claude Code's ~/.claude/projects/ path encoding.">Project</th>
+            <th data-sort="project_name" title="Basename of the working directory the session was started in (last path segment).">Project</th>
+            <th data-sort="project_dir" title="Full working directory path, decoded from Claude Code's ~/.claude/projects/ path encoding.">Project path</th>
             <th data-sort="model_id" title="Claude model ID seen on the most recent turn (e.g. claude-opus-4-7). Pricing falls back by family substring for unknown date suffixes.">Model</th>
             <th data-sort="total_turns" class="num" title="Number of assistant turns recorded from the transcript tail (one per assistant message).">Turns</th>
             <th data-sort="total_input_tokens" class="num" title="Sum of input_tokens across all turns. Weighted 1× toward the rate-limit quota.">Input</th>
