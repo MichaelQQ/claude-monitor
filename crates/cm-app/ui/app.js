@@ -13,6 +13,8 @@ const state = {
   hiddenCols: new Set(JSON.parse(localStorage.getItem('sessions-hidden-cols') || '[]')),
   sessionsRange: localStorage.getItem('sessions-range') || 'all',
   sessionsModels: new Set(JSON.parse(localStorage.getItem('sessions-models') || '[]')),
+  sessionsGroupByPath: localStorage.getItem('sessions-group-by-path') === '1',
+  sessionsExpandedPaths: new Set(JSON.parse(localStorage.getItem('sessions-expanded-paths') || '[]')),
   quotaCaps: { five_hour: null, weekly: null },
   subagentsBySession: new Map(), // session_id → Map(task_id → row)
 };
@@ -249,37 +251,8 @@ function updateModelBtnLabel() {
   btn.textContent = (n === 0 ? 'All models' : `${n} model${n === 1 ? '' : 's'}`) + ' ▾';
 }
 
-function renderSessionsTable() {
-  const all = state.sessionsCache || [];
-  const cutoff = RANGE_MS[state.sessionsRange] ? Date.now() - RANGE_MS[state.sessionsRange] : null;
-  const models = state.sessionsModels;
-  const rows = all.filter(s => {
-    if (cutoff != null && new Date(s.last_seen_at).getTime() < cutoff) return false;
-    if (models.size > 0 && !models.has(s.model_id)) return false;
-    return true;
-  });
-  const { key, dir } = state.sessionsSort;
-  const mult = dir === 'asc' ? 1 : -1;
-  const sortVal = (row) => key === 'project_name' ? projectName(row.project_dir) : row[key];
-  const sorted = [...rows].sort((a, b) => {
-    const av = sortVal(a), bv = sortVal(b);
-    if (av == null && bv == null) return 0;
-    if (av == null) return 1;
-    if (bv == null) return -1;
-    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * mult;
-    return String(av).localeCompare(String(bv)) * mult;
-  });
-  document.querySelectorAll('#sessions-table th[data-sort]').forEach(th => {
-    th.classList.toggle('sort-asc', th.dataset.sort === key && dir === 'asc');
-    th.classList.toggle('sort-desc', th.dataset.sort === key && dir === 'desc');
-  });
-  const tbody = document.querySelector('#sessions-table tbody');
-  tbody.innerHTML = '';
-  for (const s of sorted) {
-    const tr = document.createElement('tr');
-    tr.className = 'clickable';
-    tr.addEventListener('click', () => { location.hash = '#/session/' + s.session_id; });
-    tr.innerHTML = `
+function sessionCellsHtml(s) {
+  return `
       <td><code>${s.session_id.slice(0,8)}</code></td>
       <td>${escapeHtml(projectName(s.project_dir) || '—')}</td>
       <td title="${escapeHtml(s.project_dir || '')}">${escapeHtml(s.project_dir || '—')}</td>
@@ -294,7 +267,131 @@ function renderSessionsTable() {
       <td class="num">${s.last_cost_usd != null ? fmtMoney(s.last_cost_usd) : '—'}</td>
       <td class="num">${fmtMoneyPrecise(s.estimated_cost_usd)}</td>
       <td>${new Date(s.last_seen_at).toLocaleString()}</td>`;
-    tbody.appendChild(tr);
+}
+
+function aggregateGroup(sessions) {
+  const sum = (k) => sessions.reduce((a, s) => a + (s[k] || 0), 0);
+  const sumOrNull = (k) => {
+    let any = false, total = 0;
+    for (const s of sessions) if (s[k] != null) { any = true; total += s[k]; }
+    return any ? total : null;
+  };
+  const models = new Set(sessions.map(s => s.model_id).filter(Boolean));
+  return {
+    session_count: sessions.length,
+    project_dir: sessions[0].project_dir,
+    model_id: models.size === 1 ? [...models][0] : (models.size > 1 ? 'mixed' : null),
+    total_turns: sum('total_turns'),
+    total_input_tokens: sum('total_input_tokens'),
+    total_output_tokens: sum('total_output_tokens'),
+    total_cache_read: sum('total_cache_read'),
+    total_cache_write_5m: sum('total_cache_write_5m'),
+    total_cache_write_1h: sum('total_cache_write_1h'),
+    quota_tokens: sum('quota_tokens'),
+    last_cost_usd: sumOrNull('last_cost_usd'),
+    estimated_cost_usd: sumOrNull('estimated_cost_usd'),
+    last_seen_at: sessions.reduce((m, s) => {
+      const t = new Date(s.last_seen_at).getTime();
+      return t > m ? t : m;
+    }, 0),
+  };
+}
+
+function groupCellsHtml(g, expanded) {
+  const chev = expanded ? '▾' : '▸';
+  const count = g.session_count === 1 ? '1 session' : `${g.session_count} sessions`;
+  return `
+      <td><span class="group-chev">${chev}</span> ${escapeHtml(count)}</td>
+      <td>${escapeHtml(projectName(g.project_dir) || '—')}</td>
+      <td title="${escapeHtml(g.project_dir || '')}">${escapeHtml(g.project_dir || '—')}</td>
+      <td>${escapeHtml(g.model_id || '—')}</td>
+      <td class="num">${fmtInt(g.total_turns)}</td>
+      <td class="num">${fmtInt(g.total_input_tokens)}</td>
+      <td class="num">${fmtInt(g.total_output_tokens)}</td>
+      <td class="num">${fmtInt(g.total_cache_read)}</td>
+      <td class="num">${fmtInt(g.total_cache_write_5m)}</td>
+      <td class="num">${fmtInt(g.total_cache_write_1h)}</td>
+      <td class="num">${fmtQuotaWithPct(g.quota_tokens)}</td>
+      <td class="num">${g.last_cost_usd != null ? fmtMoney(g.last_cost_usd) : '—'}</td>
+      <td class="num">${fmtMoneyPrecise(g.estimated_cost_usd)}</td>
+      <td>${g.last_seen_at ? new Date(g.last_seen_at).toLocaleString() : '—'}</td>`;
+}
+
+function renderSessionsTable() {
+  const all = state.sessionsCache || [];
+  const cutoff = RANGE_MS[state.sessionsRange] ? Date.now() - RANGE_MS[state.sessionsRange] : null;
+  const models = state.sessionsModels;
+  const rows = all.filter(s => {
+    if (cutoff != null && new Date(s.last_seen_at).getTime() < cutoff) return false;
+    if (models.size > 0 && !models.has(s.model_id)) return false;
+    return true;
+  });
+  const { key, dir } = state.sessionsSort;
+  const mult = dir === 'asc' ? 1 : -1;
+  const sortVal = (row) => {
+    if (key === 'project_name') return projectName(row.project_dir);
+    if (key === 'last_seen_at' && typeof row[key] !== 'number') return new Date(row[key]).getTime();
+    return row[key];
+  };
+  const cmp = (a, b) => {
+    const av = sortVal(a), bv = sortVal(b);
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * mult;
+    return String(av).localeCompare(String(bv)) * mult;
+  };
+  document.querySelectorAll('#sessions-table th[data-sort]').forEach(th => {
+    th.classList.toggle('sort-asc', th.dataset.sort === key && dir === 'asc');
+    th.classList.toggle('sort-desc', th.dataset.sort === key && dir === 'desc');
+  });
+  const tbody = document.querySelector('#sessions-table tbody');
+  tbody.innerHTML = '';
+
+  if (state.sessionsGroupByPath) {
+    const groups = new Map();
+    for (const s of rows) {
+      const k = s.project_dir || '';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(s);
+    }
+    const entries = [...groups.entries()].map(([path, sessions]) => ({
+      path,
+      sessions: [...sessions].sort(cmp),
+      agg: aggregateGroup(sessions),
+    }));
+    entries.sort((a, b) => cmp(a.agg, b.agg));
+    for (const g of entries) {
+      const expanded = state.sessionsExpandedPaths.has(g.path);
+      const gr = document.createElement('tr');
+      gr.className = 'group-row clickable';
+      gr.innerHTML = groupCellsHtml(g.agg, expanded);
+      gr.addEventListener('click', () => {
+        if (expanded) state.sessionsExpandedPaths.delete(g.path);
+        else state.sessionsExpandedPaths.add(g.path);
+        localStorage.setItem('sessions-expanded-paths', JSON.stringify([...state.sessionsExpandedPaths]));
+        renderSessionsTable();
+      });
+      tbody.appendChild(gr);
+      if (expanded) {
+        for (const s of g.sessions) {
+          const tr = document.createElement('tr');
+          tr.className = 'clickable group-child';
+          tr.addEventListener('click', () => { location.hash = '#/session/' + s.session_id; });
+          tr.innerHTML = sessionCellsHtml(s);
+          tbody.appendChild(tr);
+        }
+      }
+    }
+  } else {
+    const sorted = [...rows].sort(cmp);
+    for (const s of sorted) {
+      const tr = document.createElement('tr');
+      tr.className = 'clickable';
+      tr.addEventListener('click', () => { location.hash = '#/session/' + s.session_id; });
+      tr.innerHTML = sessionCellsHtml(s);
+      tbody.appendChild(tr);
+    }
   }
   applyHiddenCols();
 }
@@ -371,6 +468,15 @@ function initSessionFilters() {
       if (!menu.contains(e.target) && e.target !== btn) menu.classList.add('hidden');
     });
     updateModelBtnLabel();
+  }
+  const group = document.getElementById('sessions-group-by-path');
+  if (group) {
+    group.checked = state.sessionsGroupByPath;
+    group.addEventListener('change', () => {
+      state.sessionsGroupByPath = group.checked;
+      localStorage.setItem('sessions-group-by-path', group.checked ? '1' : '0');
+      renderSessionsTable();
+    });
   }
 }
 initSessionFilters();

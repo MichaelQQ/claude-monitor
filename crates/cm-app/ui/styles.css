@@ -99,6 +99,13 @@ tbody tr.clickable:hover { background: var(--hover-bg); }
 .col-pick input { cursor: pointer; }
 .col-hidden { display: none !important; }
 
+tbody tr.group-row { background: var(--th-bg); font-weight: 600; }
+tbody tr.group-row:hover { background: var(--hover-bg); }
+tbody tr.group-row td { color: var(--fg); }
+tbody tr.group-row .group-chev { display: inline-block; width: 12px; color: var(--muted); font-weight: 400; }
+tbody tr.group-child td:first-child { padding-left: 28px; }
+tbody tr.group-child td:nth-child(2) { color: var(--muted); }
+
 :root[data-theme="light"] .u-legend,
 :root[data-theme="light"] .uplot { color: var(--fg); }
 
