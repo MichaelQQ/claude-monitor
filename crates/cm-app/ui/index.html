@@ -79,6 +79,14 @@
             <option value="all" selected>All time</option>
           </select>
         </label>
+        <label class="toolbar-field" title="Active = last turn or snapshot within the last 5 minutes.">
+          <span>Status</span>
+          <select id="sessions-activity" class="toolbar-select">
+            <option value="all" selected>All</option>
+            <option value="active">Active only</option>
+            <option value="inactive">Inactive only</option>
+          </select>
+        </label>
         <div class="toolbar-field toolbar-dropdown">
           <span>Model</span>
           <button id="sessions-model-btn" class="toolbar-btn">All models ▾</button>

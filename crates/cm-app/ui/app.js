@@ -12,6 +12,7 @@ const state = {
   sessionsSort: { key: 'last_seen_at', dir: 'desc' },
   hiddenCols: new Set(JSON.parse(localStorage.getItem('sessions-hidden-cols') || '[]')),
   sessionsRange: localStorage.getItem('sessions-range') || 'all',
+  sessionsActivity: localStorage.getItem('sessions-activity') || 'all',
   sessionsModels: new Set(JSON.parse(localStorage.getItem('sessions-models') || '[]')),
   sessionsGroupByPath: localStorage.getItem('sessions-group-by-path') === '1',
   sessionsExpandedPaths: new Set(JSON.parse(localStorage.getItem('sessions-expanded-paths') || '[]')),
@@ -208,6 +209,7 @@ async function loadSessions() {
 }
 
 const RANGE_MS = { '24h': 86400e3, '7d': 7 * 86400e3, '30d': 30 * 86400e3 };
+const ACTIVE_THRESHOLD_MS = 5 * 60 * 1000;
 
 function refreshModelFilterOptions() {
   const menu = document.getElementById('sessions-model-menu');
@@ -320,10 +322,15 @@ function groupCellsHtml(g, expanded) {
 function renderSessionsTable() {
   const all = state.sessionsCache || [];
   const cutoff = RANGE_MS[state.sessionsRange] ? Date.now() - RANGE_MS[state.sessionsRange] : null;
+  const activeCutoff = Date.now() - ACTIVE_THRESHOLD_MS;
   const models = state.sessionsModels;
+  const activity = state.sessionsActivity;
   const rows = all.filter(s => {
-    if (cutoff != null && new Date(s.last_seen_at).getTime() < cutoff) return false;
+    const ts = new Date(s.last_seen_at).getTime();
+    if (cutoff != null && ts < cutoff) return false;
     if (models.size > 0 && !models.has(s.model_id)) return false;
+    if (activity === 'active' && ts < activeCutoff) return false;
+    if (activity === 'inactive' && ts >= activeCutoff) return false;
     return true;
   });
   const { key, dir } = state.sessionsSort;
@@ -454,6 +461,15 @@ function initSessionFilters() {
     range.addEventListener('change', () => {
       state.sessionsRange = range.value;
       localStorage.setItem('sessions-range', range.value);
+      renderSessionsTable();
+    });
+  }
+  const activity = document.getElementById('sessions-activity');
+  if (activity) {
+    activity.value = state.sessionsActivity;
+    activity.addEventListener('change', () => {
+      state.sessionsActivity = activity.value;
+      localStorage.setItem('sessions-activity', activity.value);
       renderSessionsTable();
     });
   }
