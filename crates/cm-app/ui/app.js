@@ -18,6 +18,10 @@ const state = {
 };
 
 const $ = (s) => document.querySelector(s);
+const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+function chartColors() {
+  return { axis: cssVar('--muted') || '#8a93a6', grid: cssVar('--line') || '#242a36' };
+}
 const fmtInt = (n) => (n ?? 0).toLocaleString();
 const fmtMoney = (n) => '$' + (n ?? 0).toFixed(2);
 const fmtMoneyPrecise = (n) => n == null ? '—' : '$' + n.toFixed(4);
@@ -152,12 +156,13 @@ function renderLive() {
 }
 
 function stackedTurnOpts(width) {
+  const { axis, grid } = chartColors();
   return {
     width, height: 280,
     scales: { x: { time: true } },
     axes: [
-      { stroke: '#8a93a6', grid: { stroke: '#242a36' } },
-      { stroke: '#8a93a6', grid: { stroke: '#242a36' }, values: (u, vals) => vals.map(v => v >= 1000 ? (v/1000).toFixed(1)+'k' : v) },
+      { stroke: axis, grid: { stroke: grid } },
+      { stroke: axis, grid: { stroke: grid }, values: (u, vals) => vals.map(v => v >= 1000 ? (v/1000).toFixed(1)+'k' : v) },
     ],
     series: [
       {},
@@ -430,10 +435,11 @@ function drawLine(elId, data, label, color, store, key) {
   const el = document.getElementById(elId);
   if (!el) return;
   if (data[0].length === 0) { el.innerHTML = '<p style="color:var(--muted); padding:40px; text-align:center;">No data yet.</p>'; return; }
+  const { axis, grid } = chartColors();
   const opts = {
     width: el.clientWidth, height: 240,
     scales: { x: { time: true } },
-    axes: [{ stroke: '#8a93a6', grid: { stroke: '#242a36' } }, { stroke: '#8a93a6', grid: { stroke: '#242a36' } }],
+    axes: [{ stroke: axis, grid: { stroke: grid } }, { stroke: axis, grid: { stroke: grid } }],
     series: [{}, { label, stroke: color, width: 2, fill: color + '33' }],
     legend: { show: false },
   };
@@ -500,6 +506,7 @@ function renderDetailSnapshotChart(rows) {
   const cost = rows.map(r => r.total_cost_usd);
   const ctx = rows.map(r => r.context_used_pct);
   const five = rows.map(r => r.five_hour_pct);
+  const { axis, grid } = chartColors();
   const opts = {
     width: el.clientWidth, height: 240,
     scales: {
@@ -508,8 +515,8 @@ function renderDetailSnapshotChart(rows) {
       pct: { range: [0, 100] },
     },
     axes: [
-      { stroke: '#8a93a6', grid: { stroke: '#242a36' } },
-      { scale: 'cost', stroke: '#ffc36a', grid: { stroke: '#242a36' }, values: (u, vals) => vals.map(v => '$' + v.toFixed(2)) },
+      { stroke: axis, grid: { stroke: grid } },
+      { scale: 'cost', stroke: '#ffc36a', grid: { stroke: grid }, values: (u, vals) => vals.map(v => '$' + v.toFixed(2)) },
       { scale: 'pct', side: 1, stroke: '#6aa9ff', grid: { show: false }, values: (u, vals) => vals.map(v => v + '%') },
     ],
     series: [
@@ -569,6 +576,28 @@ window.addEventListener('resize', () => {
     renderDetailChart(arr);
   }
 });
+function initThemeToggle() {
+  const btn = document.getElementById('theme-toggle');
+  if (!btn) return;
+  const render = () => {
+    const t = document.documentElement.getAttribute('data-theme') || 'dark';
+    btn.textContent = t === 'dark' ? '☾' : '☀';
+  };
+  render();
+  btn.addEventListener('click', () => {
+    const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+    const next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    render();
+    renderLiveChart();
+    const route = parseRoute();
+    if (route.name === 'session' && state.detailSessionId) loadSessionDetail(state.detailSessionId);
+    if (route.name === 'trends') loadTrends();
+  });
+}
+initThemeToggle();
+
 connectWS();
 applyRoute();
 

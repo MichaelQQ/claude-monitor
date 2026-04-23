@@ -1,18 +1,42 @@
-:root {
+:root,
+:root[data-theme="dark"] {
   --bg: #0f1115;
   --fg: #e6e9ef;
   --muted: #8a93a6;
   --card: #161a22;
   --line: #242a36;
+  --th-bg: #1c2130;
+  --hover-bg: #1c2130;
   --accent: #6aa9ff;
   --ok: #8be28b;
   --warn: #ffc36a;
   --bad: #ff7b7b;
+  --shadow: 0 4px 12px rgba(0,0,0,0.4);
+  --ok-tint: rgba(139,226,139,0.15);
+  --bad-tint: rgba(255,123,123,0.15);
+}
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --fg: #1a1d23;
+  --muted: #5a6478;
+  --card: #f5f7fa;
+  --line: #e0e4eb;
+  --th-bg: #eceff5;
+  --hover-bg: #eceff5;
+  --accent: #2563eb;
+  --ok: #2f9e44;
+  --warn: #d97706;
+  --bad: #dc2626;
+  --shadow: 0 4px 12px rgba(15,17,21,0.08);
+  --ok-tint: rgba(47,158,68,0.15);
+  --bad-tint: rgba(220,38,38,0.15);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
 header { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
 header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+.header-spacer { flex: 1; }
+#theme-toggle { padding: 4px 10px; font-size: 14px; line-height: 1; }
 nav { display: flex; gap: 8px; padding: 10px 20px; border-bottom: 1px solid var(--line); }
 nav button { background: transparent; color: var(--muted); border: 1px solid transparent; padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit; }
 nav button.active { background: var(--card); border-color: var(--line); color: var(--fg); }
@@ -33,11 +57,11 @@ main { padding: 20px; }
 .legend { display: flex; gap: 16px; margin-top: 8px; font-size: 12px; color: var(--muted); }
 .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
 .pill { padding: 3px 8px; border-radius: 10px; font-size: 11px; }
-.pill-on { background: rgba(139,226,139,0.15); color: var(--ok); }
-.pill-off { background: rgba(255,123,123,0.15); color: var(--bad); }
+.pill-on { background: var(--ok-tint); color: var(--ok); }
+.pill-off { background: var(--bad-tint); color: var(--bad); }
 table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--line); }
-th { background: #1c2130; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); position: relative; }
+th { background: var(--th-bg); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); position: relative; }
 th.num { text-align: right; }
 th[data-sort] { cursor: pointer; user-select: none; }
 th[data-sort]:hover { color: var(--fg); }
@@ -52,7 +76,7 @@ tr:last-child td { border-bottom: 0; }
 td.num { font-variant-numeric: tabular-nums; text-align: right; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
 tbody tr.clickable { cursor: pointer; }
-tbody tr.clickable:hover { background: #1c2130; }
+tbody tr.clickable:hover { background: var(--hover-bg); }
 .detail-header { margin-bottom: 16px; }
 .detail-header h2 { margin: 4px 0 4px; font-size: 18px; font-weight: 600; }
 .back-link { color: var(--accent); text-decoration: none; font-size: 13px; }
@@ -68,9 +92,12 @@ tbody tr.clickable:hover { background: #1c2130; }
 .toolbar-dropdown { position: relative; }
 .toolbar-dropdown .popover { right: auto; left: 0; top: 100%; min-width: 240px; max-height: 280px; overflow-y: auto; }
 .muted-inline { color: var(--muted); font-size: 11px; }
-.popover { position: absolute; top: 100%; right: 0; margin-top: 4px; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 6px 0; min-width: 200px; z-index: 10; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+.popover { position: absolute; top: 100%; right: 0; margin-top: 4px; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 6px 0; min-width: 200px; z-index: 10; box-shadow: var(--shadow); }
 .popover.hidden { display: none; }
 .col-pick { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; user-select: none; }
-.col-pick:hover { background: #1c2130; }
+.col-pick:hover { background: var(--hover-bg); }
 .col-pick input { cursor: pointer; }
 .col-hidden { display: none !important; }
+
+:root[data-theme="light"] .u-legend,
+:root[data-theme="light"] .uplot { color: var(--fg); }
