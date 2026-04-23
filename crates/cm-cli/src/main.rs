@@ -128,16 +128,44 @@ fn print_bar(s: Option<&StatuslineInput>) {
     if let Some(rl) = &s.rate_limits {
         let mut sub = Vec::new();
         if let Some(f) = &rl.five_hour {
-            sub.push(format!("5h:{:.0}%", f.used_percentage));
+            sub.push(format!(
+                "5h:{:.0}%→{}",
+                f.used_percentage,
+                fmt_resets(f.resets_at)
+            ));
         }
         if let Some(w) = &rl.seven_day {
-            sub.push(format!("7d:{:.0}%", w.used_percentage));
+            sub.push(format!(
+                "7d:{:.0}%→{}",
+                w.used_percentage,
+                fmt_resets(w.resets_at)
+            ));
         }
         if !sub.is_empty() {
             parts.push(sub.join(" "));
         }
     }
     println!("{}", parts.join(" · "));
+}
+
+fn fmt_resets(epoch: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let dt = epoch - now;
+    if dt <= 0 {
+        return "now".into();
+    }
+    let mins = dt / 60;
+    if mins < 60 {
+        return format!("{mins}m");
+    }
+    let hrs = mins / 60;
+    if hrs < 48 {
+        return format!("{}h{}m", hrs, mins % 60);
+    }
+    format!("{}d", hrs / 24)
 }
 
 fn read_port() -> Option<u16> {
