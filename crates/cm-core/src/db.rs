@@ -19,7 +19,27 @@ pub fn open(path: &Path) -> Result<Pool> {
     Ok(pool)
 }
 
+/// Ordered list of incremental migrations. Each entry runs when its 1-based
+/// index is greater than the DB's `user_version`. Append only — never reorder
+/// or delete, since that changes version numbers on already-migrated DBs.
+type MigrationFn = fn(&Connection) -> Result<()>;
+const MIGRATIONS: &[(&str, MigrationFn)] = &[
+    ("add_turns_estimated_cost_usd", migrate_v1_estimated_cost),
+];
+
 fn migrate(conn: &Connection) -> Result<()> {
+    let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    for (i, (_name, f)) in MIGRATIONS.iter().enumerate() {
+        let version = (i + 1) as i64;
+        if version > current {
+            f(conn)?;
+            conn.execute_batch(&format!("PRAGMA user_version = {version}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn migrate_v1_estimated_cost(conn: &Connection) -> Result<()> {
     if !has_column(conn, "turns", "estimated_cost_usd")? {
         conn.execute("ALTER TABLE turns ADD COLUMN estimated_cost_usd REAL", [])?;
     }
@@ -304,4 +324,40 @@ pub fn set_tail_offset(pool: &Pool, path: &str, offset: u64) -> Result<()> {
         params![path, offset as i64],
     )?;
     Ok(())
+}
+
+/// Number of rows deleted, by table.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RetentionStats {
+    pub turns: usize,
+    pub snapshots: usize,
+    pub subagent_tasks: usize,
+    pub sessions: usize,
+}
+
+/// Delete rows older than `cutoff_ms`. Sessions are removed only when they
+/// have no remaining turns, snapshots, or subagent tasks (i.e. only empty
+/// shells get cleaned up).
+pub fn delete_older_than(pool: &Pool, cutoff_ms: i64) -> Result<RetentionStats> {
+    let conn = pool.get()?;
+    let turns = conn.execute("DELETE FROM turns WHERE ts < ?1", params![cutoff_ms])?;
+    let snapshots = conn.execute("DELETE FROM snapshots WHERE ts < ?1", params![cutoff_ms])?;
+    let subagent_tasks = conn.execute(
+        "DELETE FROM subagent_tasks WHERE last_seen_at < ?1",
+        params![cutoff_ms],
+    )?;
+    let sessions = conn.execute(
+        r#"DELETE FROM sessions
+             WHERE last_seen_at < ?1
+               AND NOT EXISTS (SELECT 1 FROM turns      WHERE session_id = sessions.session_id)
+               AND NOT EXISTS (SELECT 1 FROM snapshots  WHERE session_id = sessions.session_id)
+               AND NOT EXISTS (SELECT 1 FROM subagent_tasks WHERE session_id = sessions.session_id)"#,
+        params![cutoff_ms],
+    )?;
+    Ok(RetentionStats {
+        turns,
+        snapshots,
+        subagent_tasks,
+        sessions,
+    })
 }

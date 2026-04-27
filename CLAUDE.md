@@ -41,7 +41,7 @@ A third, smaller path: the `subagentStatusLine` hook invokes `cm subagent-status
 - **Truncation detection.** If `file_len < stored_offset`, the tailer restarts from 0 (file was rotated/truncated).
 - **Quota-normalized tokens.** The `sessions` rollup and `/v1/quota-caps` compute an input-normalized token count: `input×1 + output×5 + cache_read×0.1 + cache_write_5m×1.25 + cache_write_1h×2`, with any unattributed cache-creation bytes counted at the 5m rate. This weighting is how Anthropic publicly describes rate-limit accounting; keep the formula in sync across `server.rs::list_sessions`, `server.rs::quota_caps`, and `pricing.rs::estimate_cost_usd`.
 - **Pricing fallback.** `pricing::price_for` matches by substring (`opus`/`sonnet`/`haiku`) so unknown model date-suffixes still price. Unknown families return `None` and the turn records no estimate — that's intentional, don't add a generic fallback.
-- **Schema migrations are additive.** `db::migrate` only adds columns (currently just `turns.estimated_cost_usd`). Preserve this; there's no migration framework.
+- **Schema migrations are versioned and append-only.** `db::migrate` walks `MIGRATIONS: &[(name, fn(&Connection))]` and applies any entry whose 1-based index exceeds `PRAGMA user_version`, stamping the version after each. Never reorder or delete an entry — that changes version numbers on already-migrated DBs and silently skips steps. The `SCHEMA` DDL still runs on every open and must stay idempotent (`CREATE TABLE IF NOT EXISTS`).
 - **Project-dir decoding.** `tailer.rs::decode_project_dir` reverses Claude Code's directory-encoding scheme: `--` → literal `-`, single `-` → `/`. The two-step `\0` dance handles both without collisions.
 
 ## Runtime state on disk

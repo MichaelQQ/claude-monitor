@@ -174,3 +174,85 @@ fn tail_offset_persists_across_queries() {
     db::set_tail_offset(&pool, "/a", 99999).unwrap();
     assert_eq!(db::get_tail_offset(&pool, "/a").unwrap(), 99999);
 }
+
+#[test]
+fn fresh_db_is_stamped_at_latest_migration_version() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let pool = db::open(tmp.path()).unwrap();
+    let version: i64 = pool
+        .get()
+        .unwrap()
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert!(version >= 1, "fresh DB should be >= v1, got {version}");
+}
+
+#[test]
+fn legacy_db_without_estimated_cost_gets_migrated_and_backfilled() {
+    use rusqlite::Connection;
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    // Build a "legacy" DB: base schema as it existed before estimated_cost_usd.
+    {
+        let conn = Connection::open(tmp.path()).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE turns (
+                id             INTEGER PRIMARY KEY,
+                session_id     TEXT NOT NULL,
+                turn_uuid      TEXT NOT NULL UNIQUE,
+                ts             INTEGER NOT NULL,
+                model_id       TEXT,
+                input_tokens                INTEGER NOT NULL DEFAULT 0,
+                output_tokens               INTEGER NOT NULL DEFAULT 0,
+                cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_input_tokens     INTEGER NOT NULL DEFAULT 0,
+                ephemeral_1h_tokens         INTEGER NOT NULL DEFAULT 0,
+                ephemeral_5m_tokens         INTEGER NOT NULL DEFAULT 0,
+                service_tier                TEXT
+            );
+            "#,
+        )
+        .unwrap();
+        conn.execute(
+            r#"INSERT INTO turns (session_id, turn_uuid, ts, model_id, input_tokens, output_tokens)
+                 VALUES ('s1', 'legacy-1', 1, 'claude-opus-4-7', 1000, 2000)"#,
+            [],
+        )
+        .unwrap();
+    }
+    // Now open with the real loader — it should ALTER + backfill and bump user_version.
+    let pool = db::open(tmp.path()).unwrap();
+    let conn = pool.get().unwrap();
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert!(version >= 1, "expected v1+, got {version}");
+    let cost: Option<f64> = conn
+        .query_row(
+            "SELECT estimated_cost_usd FROM turns WHERE turn_uuid='legacy-1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let c = cost.expect("legacy row should have been backfilled");
+    assert!(c > 0.0);
+}
+
+#[test]
+fn migration_is_idempotent_across_reopens() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let p1 = db::open(tmp.path()).unwrap();
+    let v1: i64 = p1
+        .get()
+        .unwrap()
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    drop(p1);
+    let p2 = db::open(tmp.path()).unwrap();
+    let v2: i64 = p2
+        .get()
+        .unwrap()
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(v1, v2);
+}

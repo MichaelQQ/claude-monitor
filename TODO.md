@@ -19,13 +19,13 @@ Ordered by value. Each item is self-contained enough to tackle in isolation.
 
 ## Low value / cleanup
 
-- [ ] **Tests for cm-app** — the server and tailer have zero unit tests. Factor out enough of `ingest_new_bytes` and the `post_event` handler to test with `tempfile` + a `tower::ServiceExt`-driven router.
-- [ ] **Tests for cm-cli** — currently smoke-tested only. `assert_cmd` + `predicates` for the stdout bar contract.
+- [x] **Tests for cm-app** — `crates/cm-app/tests/integration.rs` covers the router via `tower::ServiceExt::oneshot` (health, `/v1/event` happy+bad JSON, subagent with/without session_id, `/v1/trends` bad window, `/v1/sessions` JSON shape), `tailer::ingest_new_bytes` (happy path, partial line, post-truncation rotation), and `drain_queue` against a path-injected temp queue file. Dev-deps: `tempfile`, `http-body-util`.
+- [x] **Tests for cm-cli** — `crates/cm-cli/tests/cli.rs` uses `assert_cmd` + `predicates` with a sandboxed `HOME` per test. Covers the statusline contract (never blanks, prints `[model]`, `%`, `$cost`, 5h/7d row), subagent rows (one JSON-per-task, label/tokens formatting), `port` (`CM_PORT` env override + "none" fallback), and the offline queue round-trip.
 - [ ] **Tighten CORS** — `tower_http::cors::CorsLayer::permissive()` is fine for localhost-only, but tighten to `allow_origin(Any)` stripped of credentials when the Tauri wrapper lands.
-- [ ] **Config file** — `~/.claude/claude-monitor/config.toml` for port pinning, retention policy, and tailer include/exclude globs. Right now everything is env/path conventions.
-- [ ] **Retention** — nothing ever deletes rows. Add `retention_days` config and a daily vacuum.
+- [x] **Config file** — `~/.claude/claude-monitor/config.toml` parsed by `cm_core::config::load`. Keys: `port`, `retention_days`, `include_globs`, `exclude_globs` (all optional, `deny_unknown_fields` so typos fail fast). `PathFilter::from_config` compiles the globs; the tailer consults it on both initial drain and live events. `CM_PORT` env wins over `config.port`, which wins over the auto-bind default. **Follow-up:** globs match against the absolute path of the transcript file; the easiest patterns target the Claude-encoded project-dir segment (e.g., `*/projects/-Users--vpon-foo/*`). No test coverage yet for glob matching itself.
+- [x] **Retention** — `config.retention_days` (>0) starts a background task that calls `cm_core::db::delete_older_than` at startup and every 24h. Removes `turns`/`snapshots`/`subagent_tasks` rows past the cutoff, plus `sessions` that become orphaned. Logs a one-liner whenever anything is deleted. **Follow-up:** no `VACUUM` — SQLite will reuse the pages, but the file won't shrink. If reclaiming disk matters, add an opt-in `vacuum_on_sweep`.
 - [ ] **Windows support** — `paths.rs` hard-codes POSIX conventions; `~/.claude/projects/<encoded-path>` decoding uses `/` which is wrong on Windows. Not urgent unless you actually use Windows.
-- [ ] **Upgrade-safe schema migrations** — current DDL uses `CREATE TABLE IF NOT EXISTS` only. Bring in `refinery` or hand-roll a `schema_version` table before the first breaking change.
+- [x] **Upgrade-safe schema migrations** — `cm_core::db::migrate` now tracks applied versions via `PRAGMA user_version`. The base schema still runs idempotently on every open (unchanged); incremental migrations live in a `MIGRATIONS: &[(&str, fn(&Connection))]` list ordered oldest→newest, each applied exactly once and then stamped. Migration v1 is the legacy `ALTER TABLE turns ADD COLUMN estimated_cost_usd` + backfill, so pre-framework databases upgrade transparently on next launch. **Follow-up:** append-only — never reorder or delete an entry, or already-migrated DBs will silently skip steps.
 
 ## Known quirks
 

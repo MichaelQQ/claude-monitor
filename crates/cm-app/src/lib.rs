@@ -3,6 +3,7 @@ pub mod state;
 pub mod tailer;
 
 use anyhow::Result;
+use cm_core::config::{self, PathFilter};
 use cm_core::{db, paths};
 use state::AppState;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -27,17 +28,27 @@ pub fn init_tracing() {
 pub async fn start(ui_dir: PathBuf) -> Result<Daemon> {
     let app_dir = paths::app_data_dir();
     std::fs::create_dir_all(&app_dir).ok();
+    let cfg = match config::load() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("config.toml invalid, using defaults: {e:#}");
+            config::Config::default()
+        }
+    };
     let db = db::open(&paths::db_path())?;
     tracing::info!("UI dir: {}", ui_dir.display());
 
     let state = AppState::new(db, ui_dir);
 
-    drain_queue(&state).ok();
-    tailer::spawn(state.clone(), paths::claude_projects_dir());
+    drain_queue(&state, &paths::queue_file()).ok();
+    let filter = PathFilter::from_config(&cfg)?;
+    tailer::spawn(state.clone(), paths::claude_projects_dir(), filter);
+    spawn_retention(state.clone(), cfg.retention_days);
 
     let port = std::env::var("CM_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
+        .or(cfg.port)
         .unwrap_or(0);
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -65,6 +76,35 @@ pub async fn start(ui_dir: PathBuf) -> Result<Daemon> {
     })
 }
 
+/// Apply `retention_days` once now and then every 24h. `None` or `Some(0)`
+/// disables retention entirely.
+fn spawn_retention(state: AppState, retention_days: Option<u32>) {
+    let Some(days) = retention_days.filter(|d| *d > 0) else {
+        return;
+    };
+    tokio::spawn(async move {
+        let period = std::time::Duration::from_secs(24 * 3600);
+        loop {
+            run_retention_once(&state, days);
+            tokio::time::sleep(period).await;
+        }
+    });
+}
+
+fn run_retention_once(state: &AppState, days: u32) {
+    let cutoff_ms = chrono::Utc::now().timestamp_millis() - (days as i64) * 86_400_000;
+    match db::delete_older_than(&state.db, cutoff_ms) {
+        Ok(s) if s.turns + s.snapshots + s.subagent_tasks + s.sessions > 0 => {
+            tracing::info!(
+                "retention: removed {} turns, {} snapshots, {} subagent rows, {} sessions (older than {}d)",
+                s.turns, s.snapshots, s.subagent_tasks, s.sessions, days
+            );
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("retention sweep failed: {e:#}"),
+    }
+}
+
 pub fn locate_ui_dir() -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
         let mut dir = exe.as_path();
@@ -79,12 +119,11 @@ pub fn locate_ui_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ui")
 }
 
-fn drain_queue(state: &AppState) -> Result<()> {
-    let p = paths::queue_file();
-    if !p.exists() {
+pub fn drain_queue(state: &AppState, path: &std::path::Path) -> Result<()> {
+    if !path.exists() {
         return Ok(());
     }
-    let body = std::fs::read_to_string(&p)?;
+    let body = std::fs::read_to_string(path)?;
     for line in body.lines() {
         if line.trim().is_empty() {
             continue;
@@ -108,6 +147,6 @@ fn drain_queue(state: &AppState) -> Result<()> {
         .ok();
         db::insert_snapshot(&state.db, &input, ts).ok();
     }
-    std::fs::remove_file(&p).ok();
+    std::fs::remove_file(path).ok();
     Ok(())
 }

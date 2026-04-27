@@ -1,6 +1,7 @@
 use crate::state::AppState;
 use anyhow::Result;
 use chrono::Utc;
+use cm_core::config::PathFilter;
 use cm_core::db;
 use cm_core::schema::LiveEvent;
 use cm_core::transcript::parse_assistant_usage;
@@ -12,20 +13,23 @@ use tokio::sync::mpsc;
 
 /// Spawns a blocking thread that watches `~/.claude/projects/**/*.jsonl`, tails new bytes
 /// into the DB, and broadcasts each new turn on the live channel.
-pub fn spawn(state: AppState, watch_root: PathBuf) {
+pub fn spawn(state: AppState, watch_root: PathBuf, filter: PathFilter) {
     std::thread::spawn(move || {
-        if let Err(e) = run(state, watch_root) {
+        if let Err(e) = run(state, watch_root, filter) {
             tracing::error!("tailer exited: {e:#}");
         }
     });
 }
 
-fn run(state: AppState, watch_root: PathBuf) -> Result<()> {
+fn run(state: AppState, watch_root: PathBuf, filter: PathFilter) -> Result<()> {
     std::fs::create_dir_all(&watch_root).ok();
 
     // Drain every jsonl that already exists, so history shows up immediately.
     let existing = discover_jsonl(&watch_root)?;
     for p in &existing {
+        if !filter.matches(p) {
+            continue;
+        }
         if let Err(e) = ingest_new_bytes(&state, p) {
             tracing::warn!("initial ingest {}: {e:#}", p.display());
         }
@@ -56,7 +60,9 @@ fn run(state: AppState, watch_root: PathBuf) -> Result<()> {
         loop {
             tokio::select! {
                 Some(p) = rx.recv() => {
-                    pending.insert(p, ());
+                    if filter.matches(&p) {
+                        pending.insert(p, ());
+                    }
                 }
                 _ = tokio::time::sleep(std::time::Duration::from_millis(150)) => {
                     if pending.is_empty() { continue; }
@@ -95,7 +101,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn ingest_new_bytes(state: &AppState, path: &Path) -> Result<()> {
+pub fn ingest_new_bytes(state: &AppState, path: &Path) -> Result<()> {
     let path_str = path.to_string_lossy().to_string();
     let mut offset = db::get_tail_offset(&state.db, &path_str)?;
     let mut file = std::fs::File::open(path)?;

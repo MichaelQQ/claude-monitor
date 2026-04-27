@@ -24,9 +24,13 @@ r2d2.workspace = true
 r2d2_sqlite.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "signal", "time"] }
 axum = { version = "0.7", features = ["ws"] }
-tower = "0.5"
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 notify = "6"
 futures-util = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
+http-body-util = "0.1"
