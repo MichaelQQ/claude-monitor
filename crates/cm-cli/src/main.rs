@@ -105,7 +105,9 @@ fn print_subagent_rows(s: Option<&SubagentStatuslineInput>) {
 }
 
 fn format_tokens(n: i64) -> String {
-    if n >= 1000 {
+    if n >= 1_000_000 {
+        format!("{:.1}M tok", n as f64 / 1_000_000.0)
+    } else if n >= 1000 {
         format!("{:.1}k tok", n as f64 / 1000.0)
     } else {
         format!("{n} tok")
@@ -118,13 +120,28 @@ fn print_bar(s: Option<&StatuslineInput>) {
         return;
     };
     let model = &s.model.display_name;
-    let pct = s
-        .context_window
-        .as_ref()
-        .and_then(|c| c.used_percentage)
-        .unwrap_or(0.0) as i64;
+    let cw = s.context_window.as_ref();
+    let pct = cw.and_then(|c| c.used_percentage).unwrap_or(0.0) as i64;
+    let session_tokens = cw
+        .map(|c| c.total_input_tokens.unwrap_or(0) + c.total_output_tokens.unwrap_or(0))
+        .unwrap_or(0);
+    let cache_hit = cw.and_then(|c| c.current_usage.as_ref()).and_then(|u| {
+        let read = u.cache_read_input_tokens.unwrap_or(0);
+        let create = u.cache_creation_input_tokens.unwrap_or(0);
+        let input = u.input_tokens.unwrap_or(0);
+        let total = read + create + input;
+        (total > 0).then(|| (read as f64 / total as f64 * 100.0) as i64)
+    });
     let cost = s.cost.as_ref().and_then(|c| c.total_cost_usd).unwrap_or(0.0);
-    let mut parts = vec![format!("[{model}] {pct}% · ${cost:.2}")];
+    let mut head = format!("[{model}] {pct}%");
+    if session_tokens > 0 {
+        head.push_str(&format!(" ({})", format_tokens(session_tokens)));
+    }
+    head.push_str(&format!(" · ${cost:.2}"));
+    if let Some(hit) = cache_hit {
+        head.push_str(&format!(" · cache:{hit}%"));
+    }
+    let mut parts = vec![head];
     if let Some(rl) = &s.rate_limits {
         let mut sub = Vec::new();
         if let Some(f) = &rl.five_hour {
